@@ -1,0 +1,13 @@
+Empty data file (need to overwrite)
+
+Format data file with 10 columns:
+region
+i index
+j index
+k index
+theta (i.e. latitude measured from north pole)
+phi (i.e. longitude measured from tail)
+radius
+Bx
+By
+Bz
