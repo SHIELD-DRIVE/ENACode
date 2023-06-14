@@ -1,6 +1,6 @@
 Empty data file (need to overwrite)
 
-Format data file with 10 columns:
+Format data file with 10 columns (no header):
 region
 i index
 j index
