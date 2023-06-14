@@ -1,6 +1,6 @@
 Empty data file (need to overwrite)
 
-Format data file with 12 columns:
+Format data file with 12 columns (no header):
 plasma density [cm^-3]
 plasma temperature [K]
 vr, radial velocity component [km/s]
