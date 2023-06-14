@@ -1,0 +1,15 @@
+Empty data file (need to overwrite)
+
+Format data file with 12 columns:
+plasma density [cm^-3]
+plasma temperature [K]
+vr, radial velocity component [km/s]
+vtheta, latitudinal velocity component [km/s]
+vphi, azimuthal velocity component [km/s]
+vt, velocity components tangential to vr [km/s]
+i index
+j index
+k index
+theta (i.e. latitude measured from north pole) [deg]
+phi (i.e. longitude measured from tail) [deg]
+radius [au]
