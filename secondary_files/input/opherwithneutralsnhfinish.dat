@@ -1,6 +1,6 @@
 Empty data file (need to overwrite)
 
-Format data file with 8 columns:
+Format data file with 8 columns (no header):
 total neutral density [cm^-3]
 total neutral temperature [K]
 i index
