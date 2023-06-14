@@ -1,6 +1,5 @@
 .run load_parameters
 .run load_opher
-.run load_heerikhuisen
 .run distribution_functions
 .run make_countrate_files
 .run ena_prod_trans
@@ -11,7 +10,6 @@
 
 load_parameters
 load_opher
-load_heerikhuisen
 .run ena_prod_trans
 .run make_countrate_files
 get_limits
