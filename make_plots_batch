@@ -1,0 +1,13 @@
+;set up common blocks 
+.run load_parameters
+load_parameters
+.run load_opher
+load_opher
+
+;do it
+.run plotter
+.run plotter_eps
+.run flux_and_counts
+plot_all
+
+
