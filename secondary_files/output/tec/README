@@ -1,0 +1,4 @@
+To post-process data files:
+
+cat header.dat denstemptest_EbandXX.dat > tec_denstemptest_EbandXX.dat
+./preplot.p
