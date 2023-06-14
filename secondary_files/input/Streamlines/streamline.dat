@@ -1,0 +1,30 @@
+Empty data file (need to overwrite)
+
+Format data file with 19 columns (currently configured to be run with tecplot header included):
+
+TITLE     = ""
+VARIABLES = "X AU"
+"Y AU"
+"Z AU"
+"U_x km/s"
+"U_y km/s"
+"U_z km/s"
+"nH"
+"UxH"
+"UyH"
+"UzH"
+"np"
+"tp"
+"vr"
+"vtheta"
+"vphi"
+"vt"
+"theta0"
+"phi0"
+"r0"
+ZONE T="Streamtrace"
+ STRANDID=0, SOLUTIONTIME=0
+ I=750, J=1, K=1, ZONETYPE=Ordered
+ DATAPACKING=POINT
+ DT=(DOUBLE DOUBLE DOUBLE SINGLE SINGLE SINGLE SINGLE SINGLE SINGLE SINGLE SINGLE SINGLE SINGLE SINGLE SINGLE SINGLE SINGLE SINGLE SINGLE )
+
