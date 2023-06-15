@@ -4,7 +4,6 @@
 .run make_countrate_files
 .run ena_prod_trans
 .run get_limits
-.run read_stream
 .run read_stream_g
 .run cool_length
 
