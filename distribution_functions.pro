@@ -36,23 +36,6 @@ return, fm
 
 end
 ;------------------------------
-function shell_fn,np,v,Ur
-
-common constants_cgs,mp,kb,kev_erg
-
-;c=3./(8.*!pi)*2.5 ; r=2.5 from Zank et al. (2010)
-;f1=np*abs(v*Ur)^(-1.5)
-;f=f1*c
-
-c=3./(8.*!pi)*2.5
-u1=365.e5^(-1.5)
-f1=np*v^(-1.5)*u1
-fs=f1*c
-if fs ne fs then stop
-
-return, fs
-end
-;--------------------------
 function zank_fn,v_plasma,np,del,el,em,ea
 
 common constants_cgs, mp,kb,kev_erg
