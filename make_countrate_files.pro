@@ -100,11 +100,11 @@ pro allCountRate
 eres = 10.
 
 common distributions,dist_names,num_dist
-common model_names, models, num_models, pui_model,vasyliunas,ribbon,gdf,hinterp,ntr_frac,nref_frac,ttr_frac,tref_frac,colde,esw_frac,etr_frac,eref_frac,moscow,moscow_temp,giacalone
-common sensor_params,hi,lo, wt9, wt10, wt11, wt12, wt13, ultra
+common model_names, models, num_models, colde,moscow_temp
+common sensor_params,hi,lo, wt9, wt10, wt11, wt12, wt13, inca
 common all_sensors,Eminarr,Emaxarr,Garr,Ecenarr
 common energybands,num_ebands,arr_eband_indexes
-common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher,ri_heerikhuisen,rf_heerikhuisen,r_lower,r_upper
+common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher,r_lower,r_upper
 common grid_opher,gridopher
 common include_survival, flag_survival, extinction
 
@@ -112,10 +112,10 @@ nr=gridopher.r.num
 
 ;makes one array out of hi and lo
 
-Eminarr=[lo.E.min,hi.e.min,ultra.e.min]
-Emaxarr=[lo.e.max,hi.e.max,ultra.e.max]
-Garr=[lo.g,hi.g,ultra.g]
-Ecenarr=[lo.e.central,hi.e.central,ultra.e.central]
+Eminarr=[lo.E.min,hi.e.min,inca.e.min]
+Emaxarr=[lo.e.max,hi.e.max,inca.e.max]
+Garr=[lo.g,hi.g,inca.g]
+Ecenarr=[lo.e.central,hi.e.central,inca.e.central]
 
 lc=make_array(ntheta,nphi)
 cool=make_array(ntheta,nphi,nr,/double)
@@ -138,8 +138,7 @@ kappa_ref0=make_array(ntheta,nphi,nr,/double)
 vshock0=make_array(ntheta,nphi,nr,/double)
 esw_frac0=make_array(ntheta,nphi,nr,/double)
 
-if extinction eq 1 and giacalone eq 0 or vasyliunas eq 1 then read_stream, lc, cool, vx, vy, vz, a_z, np_stream, tp_stream, vr_stream, vt_stream ; GIACALONE
-if giacalone eq 1 then read_stream_g, lc, cool, vx, vy, vz, ntr_frac0, nref_frac0, nen_frac0, etr_frac0, eref_frac0, een_frac0,em_frac0, kappa_ref0,vshock0,esw_frac0 ; GIACALONE 
+if extinction eq 1 then read_stream_g, lc, cool, vx, vy, vz, ntr_frac0, nref_frac0, nen_frac0, etr_frac0, eref_frac0, een_frac0,em_frac0, kappa_ref0,vshock0,esw_frac0 ; GIACALONE 
 
 ;do for all modelers and all distributions
 for i=0,num_models-1 do begin
@@ -172,12 +171,12 @@ pro countrate,eband,eres,modeler,dist, lc, cool, vx, vy, vz, a_z, np_stream, tp_
 
 
 common distributions,dist_names,num_dist
-common model_names, models, num_models, pui_model,vasyliunas,ribbon,gdf,hinterp,ntr_frac,nref_frac,ttr_frac,tref_frac,colde,esw_frac,etr_frac,eref_frac,moscow,moscow_temp,giacalone
-common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher,ri_heerikhuisen,rf_heerikhuisen
+common model_names, models, num_models, colde,moscow_temp
+common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher
 common all_sensors,Eminarr,Emaxarr,Garr,Ecenarr
 common path_names,countrate_path,averagefluxplots_path,countrateplots_path,count_input_path,count_output_path
 common kappa_value,kappa
-common sensor_params,hi,lo,wt9,wt10,wt11,wt12,wt13,ultra
+common sensor_params,hi,lo,wt9,wt10,wt11,wt12,wt13,inca
 
 if modeler ne 'Opher_multiion_withneutrals' then countrate_map=fltarr(ntheta,nphi) else countrate_map=fltarr(ntheta,nphi,5) ; Malama MI
 
@@ -194,18 +193,14 @@ if modeler eq 'Opher_withneutrals' then opherwithneutralsfile
 if modeler eq 'Opher_multiion_withneutrals' then opherwithneutralsfile ;ophermultiionwithneutralsfile
 while Energy lt Emaxarr[Eband]-1e-6 do begin ; 1e-6 added by MZK since code was running energy=emaxarr[eband]
     if Eband ge 14 and Eband le 20 then begin ; for only integrating at central INCA energy
-	    if pui_model eq 'Malama' then make_flux,energy,dist,modeler,flux_map1, lc, cool, vx, vy, vz, a_z, np_stream, tp_stream, vr_stream, vt_stream,eband, $
-                                          ntr_frac0, nref_frac0, nen_frac0, etr_frac0, eref_frac0, een_frac0, em_frac0, kappa_ref0,vshock0,esw_frac0
-            if pui_model eq 'Zirnstein' then make_flux,energy,dist,modeler,flux_map1, lc, cool, vx, vy, vz, a_z, np_stream, tp_stream, vr_stream, vt_stream,eband, $
-                                          ntr_frac0, nref_frac0, nen_frac0, etr_frac0, eref_frac0, een_frac0, em_frac0, kappa_ref0,vshock0,esw_frac0
+	    make_flux,energy,dist,modeler,flux_map1, lc, cool, vx, vy, vz, a_z, np_stream, tp_stream, vr_stream, vt_stream,eband, $
+            ntr_frac0, nref_frac0, nen_frac0, etr_frac0, eref_frac0, een_frac0, em_frac0, kappa_ref0,vshock0,esw_frac0
             print, 'energyband de= ', eband
             countrate_map=flux_map1*Energy*Garr[eband]
             Energy=Emaxarr[Eband] ; set energy to max energy to break while loop
     endif else begin
-    	if pui_model eq 'Malama' then make_flux,energy,dist,modeler,flux_map1, lc, cool, vx, vy, vz, a_z, np_stream, tp_stream, vr_stream, vt_stream,eband, $
-                                      ntr_frac0, nref_frac0, nen_frac0, etr_frac0, eref_frac0, een_frac0, em_frac0, kappa_ref0,vshock0,esw_frac0
-    	if pui_model eq 'Zirnstein' then make_flux,energy,dist,modeler,flux_map1, lc, cool, vx, vy, vz, a_z, np_stream, tp_stream, vr_stream, vt_stream,eband, $
-                                         ntr_frac0, nref_frac0, nen_frac0, etr_frac0, eref_frac0, een_frac0, em_frac0, kappa_ref0,vshock0,esw_frac0
+    	make_flux,energy,dist,modeler,flux_map1, lc, cool, vx, vy, vz, a_z, np_stream, tp_stream, vr_stream, vt_stream,eband, $
+        ntr_frac0, nref_frac0, nen_frac0, etr_frac0, eref_frac0, een_frac0, em_frac0, kappa_ref0,vshock0,esw_frac0
     	fracfinished=(energy-Eminarr[eband])/(Emaxarr[eband]-Eminarr[eband])
     	print, energy, Eminarr[eband],Emaxarr[eband]
     	print, 'energyband de= ', eband, ' finished ',fracfinished*100.,'%'
@@ -248,12 +243,12 @@ end
 pro opherwithneutralsfile
 ;Stores in common block the  data array of proton number density,
 ;plasma temperature,radial velocity, tangential velocity, theta,phi,r
-common secondary_path_names,secondary_path, opher_secondary_file, heerikhuisen_secondary_file, heerikhuisen_secondarynh_file, opher_withneutrals_secondary_file, opher_withneutrals_secondarynh_file, opher_twoplasmas_secondaryp1_file,opher_twoplasmas_secondaryp2_file, opher_twoplasmas_secondarynh_file, opher_withneutrals_secondarystream_file,opher_withneutrals_secondary_file1, opher_withneutrals_secondarynh_file1,opher_withneutrals_secondary_file2, opher_withneutrals_secondarynh_file2,opher_withneutrals_secondaryinterp_file,input_path,output_path
+common secondary_path_names,secondary_path, opher_withneutrals_secondary_file, opher_withneutrals_secondarynh_file, opher_withneutrals_secondarystream_file,input_path,output_path
 common data_opher,dataopher,sdataopher
 common grid_opher,gridopher
 common nhdata_opher,nhopher,snhopher ;used when neutrals
-common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher,ri_heerikhuisen,rf_heerikhuisen,r_lower,r_upper
-common model_names, models, num_models, pui_model,vasyliunas,ribbon,gdf,hinterp,ntr_frac,nref_frac,ttr_frac,tref_frac,colde,esw_frac,etr_frac,eref_frac,moscow,moscow_temp, giacalone
+common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher,r_lower,r_upper
+common model_names, models, num_models, colde,moscow_temp
 
 plasmafile = secondary_path+input_path+opher_withneutrals_secondary_file
 neutralfile = secondary_path+input_path+opher_withneutrals_secondarynh_file
@@ -332,15 +327,15 @@ pro make_flux,energy,dist,modeler,flux,lc, cool, vx, vy, vz, a_z, np_stream, tp_
 
 common secondary_path_names,secondary_path ; added by MZK for writing test boundary file
 common constants_cgs, mp,kb,kev_erg, AU_cm
-common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher,ri_heerikhuisen,rf_heerikhuisen,r_lower,r_upper,r_inner,moscow_regs
+common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher,r_lower,r_upper,r_inner,moscow_regs
 common rlimits, r_limits_lower, r_limits_upper, boundaries_arr ; boundaries_arr added by MZK
 common kappa_value,kappa
 common magnetic_field, ophermagnetic
 common radial_limits, radial_range ; ADDED BY MZK
 common kappa_value,kappa,kappaPUI,kappaRef,kappaISM,kappaOH ; ADDED BY MZK
 common include_survival, flag_survival, extinction ; ADDED BY MZK
-common model_names, models, num_models, pui_model,vasyliunas,ribbon,gdf,hinterp,ntr_frac,nref_frac,ttr_frac,tref_frac,colde,esw_frac,etr_frac,eref_frac,moscow,moscow_temp,giacalone ; ADDED BY MZK
-common sensor_params, hi,lo, wt9, wt10, wt11, wt12, wt13, ultra 
+common model_names, models, num_models, colde,moscow_temp ; ADDED BY MZK
+common sensor_params, hi,lo, wt9, wt10, wt11, wt12, wt13, inca 
 
 if modeler eq 'Opher' then begin 
    common grid_opher,gridopher
@@ -423,7 +418,6 @@ flux_test3=make_array(ntheta,nphi,nr,/double)
 flux_test_sw=make_array(ntheta,nphi,nr,/double)
 rts=make_array(ntheta,nphi,/double)
 rad_ts=make_array(ntheta,nphi,/double)
-zirn_rat=make_array(ntheta,nphi,/double)
 a=make_array(ntheta,nphi,/double)
 nh_avg=make_array(ntheta,nphi,/double)
 tp_ts=make_array(ntheta,nphi,/double)
@@ -579,7 +573,7 @@ flux[t,p]=calc_diff_flux(dist,energy,r,tp,ur,ut,nn,np,theta,kappa0,bet[t,p,rad])
 					if boundaries_arr[t,p,rad] eq 6. then kappa0=kappaOH
                                         if boundaries_arr[t,p,rad] lt 3. then kappa0=kappaISM; Setting different kappa value for ISM - MZK
                                         if boundaries_arr[t,p,rad] eq 4 or boundaries_arr[t,p,rad] eq 5 then kappa0=1.0
-					if giacalone ne 1 or boundaries_arr[t,p,rad] ne 3 then kappaEn=kappa
+					if boundaries_arr[t,p,rad] ne 3 then kappaEn=kappa
 
 					if ext[t,p,rad] ne ext[t,p,rad] or ext[t,p,rad] eq 0. then ext[t,p,rad]=1.e-10
 
@@ -612,13 +606,9 @@ if boundaries_arr[t,p,rad] eq 4 and r gt 40 then begin
 	if r lt 150 and boundaries_arr[t,p,rad-1] ne 3 then a[t,p]=rts[t,p]*nh_avg[t,p]*(nu1au+sig_cx_sw*u1au*n1au)/(u1au*n1au)
 endif
 
-if boundaries_arr[t,p,rad] eq 3 and boundaries_arr[t,p,rad-1] eq 6 and a_z[t,p,rad] eq 0 and vasyliunas eq 1 then boundaries_arr[t,p,rad]=6
-if boundaries_arr[t,p,rad] eq 3 and boundaries_arr[t,p,rad-1] eq 2 and a_z[t,p,rad] eq 0 and vasyliunas eq 1 then boundaries_arr[t,p,rad]=2
 if boundaries_arr[t,p,rad] eq 3 and boundaries_arr[t,p,rad-1] ne 2 and boundaries_arr[t,p,rad-1] ne 1 or boundaries_arr[t,p,rad] eq 6 and boundaries_arr[t,p,rad-1] ne 2 and boundaries_arr[t,p,rad-1] ne 1 then begin
 
-if vasyliunas eq 1 then ni_rat2[t,p,rad]=a_z[t,p,rad]/a_z[ntheta/2.,nphi/2.,ceil(r_ts[ntheta/2.,nphi/2.]-r_lower)/2] ; fixed ratios at TS that propagate along streamlines -- BEST
-
-if giacalone eq 1 then begin
+; Setting termination shock fractions calculated in read_stream_g and from Eqs. 6-13 in Kornbleuth+2023
 	ntr_frac=ntr_frac0[t,p,rad]
 	nref_frac=nref_frac0[t,p,rad]
 	nen_frac=nen_frac0[t,p,rad]
@@ -629,41 +619,25 @@ if giacalone eq 1 then begin
 	kappaEn=kappa_ref0[t,p,rad]
         vshock=vshock0[t,p,rad]
 	esw_frac=esw_frac0[t,p,rad]
-
         nsw_frac=1-ntr_frac-nref_frac
-
         ttr_frac=etr_frac/ntr_frac
         tref_frac=eref_frac/(nref_frac*(1-nen_frac))
         tsw_frac=0.04/nsw_frac
         ten_frac=(1-etr_frac-eref_frac-0.04)/(nen_frac*nref_frac)
-        if colde eq 1 and giacalone eq 1 then tp=2*tp/(1+tsw_frac)
-endif
+        if colde eq 1 then tp=2*tp/(1+tsw_frac)
 
 if finite(ni_rat2[t,p,rad]) ne 1 then stop
-zirn_rat[t,p]=a[t,p]/a[ntheta/2.,nphi/2.]
                 ; Primary Method for Modeling PUIs
-                if vasyliunas eq 1 then np1=ni_rat2[t,p,rad]*ntr_frac*np*ext[t,p,rad] else np1=ntr_frac*np*ext[t,p,rad] ; MHD Profile w/ Vasyliunas scaling
-		if vasyliunas eq 1 then np2=ni_rat2[t,p,rad]*nref_frac*np*ext[t,p,rad] else np2=nref_frac*(1-nen_frac)*np*ext[t,p,rad] ; MHD Profile w/ Vasyliunas scaling
-		if giacalone ne 1 then nsw=(1-ni_rat2[t,p,rad]*(ntr_frac+nref_frac))*np*ext[t,p,rad] else nsw=nsw_frac*np*ext[t,p,rad] ; solar wind
-                if giacalone ne 1 then np3=np-nsw-np1-np2 else np3=nref_frac*nen_frac*np*ext[t,p,rad]; np3=nen_frac*np*ext[t,p,rad]; Locally created PUIs
+                np1=ntr_frac*np*ext[t,p,rad] ; MHD Profile w/ Vasyliunas scaling
+		np2=nref_frac*(1-nen_frac)*np*ext[t,p,rad] ; MHD Profile w/ Vasyliunas scaling
+		nsw=nsw_frac*np*ext[t,p,rad] ; solar wind
+                np3=nref_frac*nen_frac*np*ext[t,p,rad]; np3=nen_frac*np*ext[t,p,rad]; Locally created PUIs
                 if np3 le 0 then np3=1e-10
-                if boundaries_arr[t,p,rad] eq 6 and t gt 1 then np3=np3 else if boundaries_arr[t,p,rad] eq 6 and t le 1 then np3=1e-10
-                if boundaries_arr[t,p,rad] eq 6 and t gt 1 then np1=np1*0.8 else if boundaries_arr[t,p,rad] eq 6 and t le 1 then np1=1e-10
-                if boundaries_arr[t,p,rad] eq 6 and t gt 1 then np2=np2 else if boundaries_arr[t,p,rad] eq 6 and t le 1 then np2=1e-10
-                if boundaries_arr[t,p,rad] eq 6 and t gt 1 then nsw=np1*0.2 else if boundaries_arr[t,p,rad] eq 6 and t le 1 then nsw=1e-10
-		
-                if boundaries_arr[t,p,rad] eq 6 then ur=ur;30e5
-		if boundaries_arr[t,p,rad] eq 6 then ut=ut;0.
 
-                if colde eq 1 and giacalone ne 1 then tp=2*tp/(1+((1-ttr_frac*ntr_frac-tref_frac*nref_frac)/(1-ni_rat2[t,p,rad]*(ntr_frac+nref_frac))))
-		if giacalone ne 1 then tp1=ttr_frac*tp/ni_rat2[t,p,rad] else tp1=tp*ttr_frac ; Transmitted PUIs from interstellar neutrals
-                if giacalone ne 1 then tp2=tref_frac*tp/ni_rat2[t,p,rad] else tp2=tp*tref_frac ; Reflected PUIs
-                if giacalone ne 1 then tp3=1e-10 else tp3=tp*ten_frac
-		if giacalone ne 1 then tsw=tp*(1-ttr_frac*ntr_frac-tref_frac*nref_frac)/(1-ni_rat2[t,p,rad]*(ntr_frac+nref_frac)) else tsw=tp*tsw_frac
-                if boundaries_arr[t,p,rad] eq 6 and t gt 1 then tp3=tp3 else if boundaries_arr[t,p,rad] eq 6 and t le 1 then tp3=1e-10;3.*tp
-                if boundaries_arr[t,p,rad] eq 6 and t gt 1 then tp1=tp1 else if boundaries_arr[t,p,rad] eq 6 and t le 1 then tp1=1e-10; 1e-10
-                if boundaries_arr[t,p,rad] eq 6 and t gt 1 then tp2=tp2 else if boundaries_arr[t,p,rad] eq 6 and t le 1 then tp2=1e-10; 1e-10
-                if boundaries_arr[t,p,rad] eq 6 and t gt 1 then tsw=(1+(bsw/0.15)^2.)*tp1 else if boundaries_arr[t,p,rad] eq 6 and t le 1 then tsw=1e-10; 1e-10
+		tp1=tp*ttr_frac ; Transmitted PUIs from interstellar neutrals
+                tp2=tp*tref_frac ; Reflected PUIs
+                tp3=tp*ten_frac
+		tsw=tp*tsw_frac
 
 if tp1 le 0 or np1 le 0 or tp2 le 0 or np2 le 0 or tp3 le 0 or np3 le 0 or tsw le 0 or nsw le 0 then stop
 if tp1 ne tp1 or np1 ne np1 or tp2 ne tp2 or np2 ne np2 or tp3 ne tp3 or np3 ne np3 or tsw ne tsw or nsw ne nsw then stop
@@ -691,22 +665,13 @@ if ur ne ur or ut ne ut or energy ne energy then stop
                                    if boundaries_arr[t,p,rad] eq 3 then begin
 					flux[t,p,0]=calc_diff_flux(dist,energy,r,tp1,ur,ut,nn,np1,theta,kappaPUI,bet[t,p,rad])+flux[t,p,0] ; Trans PUI, kappa0 by MZK
 					flux[t,p,1]=calc_diff_flux(dist,energy,r,tp2,ur,ut,nn,np2,theta,kappaRef,bet[t,p,rad])+flux[t,p,1] ; Refl PUI (ENA), kappa0 by MZK
-					if giacalone ne 1 then flux[t,p,2]=calc_diff_flux(dist,energy,r,tp3,ur,ut,nn,np3,theta,kappaEn,bet[t,p,rad])+flux[t,p,2] else $
-                                                               flux[t,p,2]=calc_diff_flux_zank(dist,energy,r,ur,ut,nn,np3,theta,kappaEn,bet[t,p,rad],een_frac,em_frac,vshock)+flux[t,p,2] ; local PUI, kappa0 by MZK
+                                        flux[t,p,2]=calc_diff_flux_zank(dist,energy,r,ur,ut,nn,np3,theta,kappaEn,bet[t,p,rad],een_frac,em_frac,vshock)+flux[t,p,2] ; local PUI, kappa0 by MZK
 					flux[t,p,3]=calc_diff_flux(dist,energy,r,tsw,ur,ut,nn,nsw,theta,kappa0,bet[t,p,rad])+flux[t,p,3] ; SW ion, kappa0 by MZK
-                                    endif else if boundaries_arr[t,p,rad] eq 6 then begin
-                                        flux[t,p,0]=calc_diff_flux(dist,energy,r,tp1,ur,ut,nn,np1,theta,kappaPUI,bet[t,p,rad])+flux[t,p,0] ; Trans PUI, kappa0 by MZK
-                                        flux[t,p,1]=calc_diff_flux(dist,energy,r,tp2,ur,ut,nn,np2,theta,kappaRef,bet[t,p,rad])+flux[t,p,1] ; Refl PUI (ENA), kappa0 by MZK
-                                        if giacalone ne 1 then flux[t,p,2]=calc_diff_flux(dist,energy,r,tp3,ur,ut,nn,np3,theta,kappaEn,bet[t,p,rad])+flux[t,p,2] else $
-                                                               flux[t,p,2]=calc_diff_flux_zank(dist,energy,r,ur,ut,nn,np3,theta,kappaEn,bet[t,p,rad],een_frac,em_frac,vshock)+flux[t,p,2] ; local PUI, kappa0 by MZK
-                                        flux[t,p,3]=calc_diff_flux(dist,energy,r,tsw,ur,ut,nn,nsw,theta,kappa0,bet[t,p,rad])+flux[t,p,3] ; SW ion, kappa0 by MZK
                                     endif
  
 					flux_test1[t,p,rad]=calc_diff_flux(dist,energy,r,tp1,ur,ut,nn,np1,theta,kappaPUI,bet[t,p,rad])
-					if boundaries_arr[t,p,rad] eq 6 then flux_test2[t,p,rad]=calc_diff_flux(dist,energy,r,tp2,ur,ut,nn,np2,theta,kappaOH,bet[t,p,rad])
-					if boundaries_arr[t,p,rad] ne 6 then flux_test2[t,p,rad]=calc_diff_flux(dist,energy,r,tp2,ur,ut,nn,np2,theta,kappaRef,bet[t,p,rad])
-					if giacalone ne 1 then flux_test3[t,p,rad]=calc_diff_flux(dist,energy,r,tp3,ur,ut,nn,np3,theta,kappaEn,bet[t,p,rad]) else $
-                                                               flux_test3[t,p,rad]=calc_diff_flux_zank(dist,energy,r,ur,ut,nn,np3,theta,kappaEn,bet[t,p,rad],een_frac,em_frac,vshock)
+					flux_test2[t,p,rad]=calc_diff_flux(dist,energy,r,tp2,ur,ut,nn,np2,theta,kappaRef,bet[t,p,rad])
+                                        flux_test3[t,p,rad]=calc_diff_flux_zank(dist,energy,r,ur,ut,nn,np3,theta,kappaEn,bet[t,p,rad],een_frac,em_frac,vshock)
 					flux_test_sw[t,p,rad]=calc_diff_flux(dist,energy,r,tsw,ur,ut,nn,nsw,theta,kappa0,bet[t,p,rad])
 
 endif
@@ -721,30 +686,16 @@ if modeler eq 'Opher_multiion_withneutrals' then flux[t,p,4]=flux[t,p,0]+flux[t,
     endfor	
 endfor
 
-if giacalone eq 1 then begin ; repopulating some arrays for plotting purposes
 a_z=nen_frac0 ; accelerated fraction
 ni_rat2=een_frac0 ; min acc. energy
 np_stream=em_frac0 ; max acc. energy
 tp_stream=kappa_ref0 ; delta
 vr_stream=vshock0 ; speed of shock
-endif
 
 close,1
 
-if energy gt 1.1 and energy lt 1.14 then begin
-   openw,1,'GH_1_11keV.dat'
-   for i=30,60 do printf, 1, data.r[19,29,i],dens_test1[19,29,i],temp_test1[19,29,i],flux_test1[19,29,i],dens_test2[19,29,i],temp_test2[19,29,i],flux_test2[19,29,i],dens_test3[19,29,i],temp_test3[19,29,i],flux_test3[19,29,i] 
-   close,1
-endif
-
-if energy gt 4.1 and energy lt 4.5 then begin
-   openw,1,'GH_4_29keV.dat'
-   for i=30,60 do printf, 1, data.r[19,29,i],dens_test1[19,29,i],temp_test1[19,29,i],flux_test1[19,29,i],dens_test2[19,29,i],temp_test2[19,29,i],flux_test2[19,29,i],dens_test3[19,29,i],temp_test3[19,29,i],flux_test3[19,29,i]
-   close,1
-endif
-
-emin=[0.68,1.1,1.7,2.65,4.1,8.1,17.0,28.5,42.8,33.,55.,102.,168.]
-emax=[0.73,1.14,1.8,2.75,4.5,8.7,18.5,30.0,44.8,34.,57.,106.,174.]
+emin=[0.68,1.1,1.7,2.65,4.1,8.1,17.0,28.5,42.8]
+emax=[0.73,1.14,1.8,2.75,4.5,8.7,18.5,30.0,44.8]
 
 ; Making output files for each energy band
 if energy gt emin[eband-9] and energy lt emax[eband-9] then begin
@@ -766,7 +717,6 @@ for j=0,nphi-1 do begin
         endfor
 endfor
 close,1
-print, "Cooling length for tail: ", data.r[22,0,lc[22,0]]
 endif
 
 
@@ -851,7 +801,7 @@ pro ionization_rate,Ea,bet ; by MZK
 common grid_opher,gridopher
 common data_opher,dataopher,sdataopher
 common nhdata_opher,nhopher,snhopher
-common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher,ri_heerikhuisen,rf_heerikhuisen,r_lower,r_upper,r_inner,moscow_regs 
+common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher,r_lower,r_upper,r_inner,moscow_regs 
 common constants_cgs, mp,kb,kev_erg,AU_cm
 common rlimits, r_limits_lower, r_limits_upper, boundaries_arr
 nr=gridopher.r.num
