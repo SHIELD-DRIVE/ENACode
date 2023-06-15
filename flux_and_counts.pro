@@ -77,7 +77,7 @@ end
 ;reads count rates data files
 pro read_countrate,eband,dist_type,model_type,countrate_map
 
-common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher,ri_heerikhuisen,rf_heerikhuisen
+common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher
 common kappa_value,kappa
 common path_names,countrate_path,averagefluxplots_path,countrateplots_path,count_input_path,count_output_path
 common model_names,models,num_models
@@ -159,7 +159,7 @@ pro plot_averageflux,averageflux_map,eband,dist_type,model_type,maxflux,minflux,
 ;Inputs
 ;       eband =energyband number 0-7 lo 8-13 hi
 ;      
-common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_,rf_opher,ri_heerikhuisen,rf_heerikhuisen
+common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_,rf_opher
 common path_names,countrate_path,averagefluxplots_path,countrateplots_path,count_input_path,count_output_path
 common plot_flags, onerange_flag, manual_onerange_flag, plot_log, plot_limited, manual_lim, manual_maxset, manual_minset, eps_plot
 common plot_params,latmin,latmax,lonmin,lonmax,map_dlat,map_dlon,map_numlatlabels,map_lons,map_lonnames,onerange_flux_min, onerange_flux_max,onerange_cr_min, onerange_cr_max
@@ -249,7 +249,7 @@ end
 pro plot_cr,countrate_map,eband,dist_type,model_type,crmax,crmin
 ;Plots the countrate data written by the countrate program
 
-common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_,rf_opher,ri_heerikhuisen,rf_heerikhuisen
+common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_,rf_opher
 common path_names,countrate_path,averagefluxplots_path,countrateplots_path,count_input_path,count_output_path
 common model_names,models,num_models
 common distributions,dist_names,num_dist
