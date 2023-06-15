@@ -114,7 +114,7 @@ common include_survival, flag_survival
 ; nn = neutral number density in cm^-3
 ; r = distance from sun in AU
 ; Ea = Energy of ENA in keV
-common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher,ri_heerikhuisen,rf_heerikhuisen
+common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher
 common constants_cgs, mp,kb,kev_erg,AU_cm
 
 if ea ne ea or r ne r or nn ne nn or theta_value ne theta_value or vplasma ne vplasma or bet ne bet then stop
