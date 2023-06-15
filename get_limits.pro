@@ -2,8 +2,8 @@ pro get_limits
 
 common rlimits, r_limits_lower, r_limits_upper, boundaries_arr
 common magnetic_field, ophermagnetic
-common grid_params, dtheta, dphi, dr, nphi, ntheta, phi_first, phi_last,  theta_first,  theta_last, ri_opher, rf_opher, ri_heerikhuisen, rf_heerikhuisen,r_lower,r_upper,r_inner,moscow_regs
-common secondary_path_names,secondary_path, opher_secondary_file, heerikhuisen_secondary_file, heerikhuisen_secondarynh_file, opher_withneutrals_secondary_file, opher_withneutrals_secondarynh_file, opher_twoplasmas_secondaryp1_file,opher_twoplasmas_secondaryp2_file, opher_twoplasmas_secondarynh_file, opher_withneutrals_secondarystream_file,opher_withneutrals_secondary_file1, opher_withneutrals_secondarynh_file1,opher_withneutrals_secondary_file2, opher_withneutrals_secondarynh_file2,opher_withneutrals_secondaryinterp_file,input_path,output_path
+common grid_params, dtheta, dphi, dr, nphi, ntheta, phi_first, phi_last,  theta_first,  theta_last, ri_opher, rf_opher,  r_lower,r_upper,r_inner,moscow_regs
+common secondary_path_names,secondary_path, opher_withneutrals_secondary_file, opher_withneutrals_secondarynh_file, opher_withneutrals_secondarystream_file,input_path,output_path
 common grid_opher,gridopher
 common radial_limits, radial_range
 
