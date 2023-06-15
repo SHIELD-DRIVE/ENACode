@@ -1,11 +1,11 @@
 pro read_stream_g, lc, cool, vx, vy, vz, ntr, nref, nen, etr, eref, een, em, kappa_ref, vshock, esw
   
-  common secondary_path_names,secondary_path, opher_secondary_file, heerikhuisen_secondary_file, heerikhuisen_secondarynh_file, opher_withneutrals_secondary_file, opher_withneutrals_secondarynh_file, opher_twoplasmas_secondaryp1_file,opher_twoplasmas_secondaryp2_file, opher_twoplasmas_secondarynh_file, opher_withneutrals_secondarystream_file,opher_withneutrals_secondary_file1, opher_withneutrals_secondarynh_file1,opher_withneutrals_secondary_file2, opher_withneutrals_secondarynh_file2,opher_withneutrals_secondaryinterp_file,input_path,output_path
+  common secondary_path_names,secondary_path, opher_withneutrals_secondary_file, opher_withneutrals_secondarynh_file, opher_withneutrals_secondarystream_file,input_path,output_path
   common constants_cgs, mp,kb,kev_erg, AU_cm
-  common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher,ri_heerikhuisen,rf_heerikhuisen,r_lower,r_upper,r_inner,moscow_regs
+  common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher,r_lower,r_upper,r_inner,moscow_regs
   common grid_opher,gridopher
   common rlimits, r_limits_lower, r_limits_upper, boundaries_arr
-  common model_names, models, num_models, pui_model, vasyliunas, ribbon,gdf, hinterp, ntr_frac, nref_frac, ttr_frac, tref_frac,colde,esw_frac,etr_frac,eref_frac,moscow,moscow_temp
+  common model_names, models, num_models, colde,moscow_temp
   
   nr=gridopher.r.num; number of r bins
   sv=7.7437451e-08 ; vena(1 keV)*sigma(1 keV)
