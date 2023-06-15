@@ -3,7 +3,7 @@ pro load_opher
 ;of Merav's grid
 
 common grid_opher,gridopher
-common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher,ri_heerikhuisen,rf_heerikhuisen
+common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher
 common data_opher,dataopher,sdataopher
 common nhdata_opher,nhopher,snhopher ;used when neutrals
 
@@ -31,11 +31,10 @@ den=dblarr(3,ntheta,nphi,nr)
 neutral=dblarr(ntheta,nphi,nr,4)
 dataopher={plasmaopher, density:den, temp:other,vr:other,vphi:other,vtheta:other,vt:other,theta:other,phi:other,r:other}
 nhopher = {neutralopher, density:other}
-;nhopher = {neutralopher,density:neutral, vr:neutral, vt:neutral}
+
 ;creates structure for loading secondary
 sdataopher={splasmaopher, density:other, temp:other,vr:other,vphi:other,vtheta:other,vt:other,theta:other,phi:other,r:other}
 snhopher = {sneutralopher,density:other, temp:other}
-;snhopher = {sneutralopher,density:neutral, vr:other, vt:other, temp:other} ; for neutral pops -MZK
 
 end
 
