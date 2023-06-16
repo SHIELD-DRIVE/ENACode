@@ -5,7 +5,6 @@
 .run ena_prod_trans
 .run get_limits
 .run read_stream_g
-.run cool_length
 
 load_parameters
 load_opher
