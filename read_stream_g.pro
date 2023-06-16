@@ -88,20 +88,6 @@ if moscow_regs eq 1 then begin
         em0[i]=exp(18.7905*r_ts^2-10.5773*r_ts+3.21888)
         kappa_ref0[i]=exp(-13.5408*r_ts^2+6.52448*r_ts+2.01490); - this is for delta=7.5 @ V2
         esw0[i]=exp(2.73671*r_ts^2-0.477155*r_ts-3.21888)
-        ;if r[i]/82. lt 1. then nen0[i]=1-0.75-ntr0[i]-nref0[i]; Full: 1-0.70-ntr0[i]-nref0[i]
-        ;if r[i]/82. lt 1. then een0[i]=1-0.04-etr0[i]-eref0[i]; Full: 1-0.06-etr0[i]-eref0[i]
-        ;if 1-ntr0[i]-nref0[i] le 0.65 then begin
-	;	ndiff=1-ntr0[i]-nref0[i]
-        ;        nswdiff=0.65-ndiff
-	;	ntr0[i]=ntr0[i]-nswdiff/2.
-	;	nref0[i]=nref0[i]-nswdiff/2.
-	;endif
-	;if 1-etr0[i]-eref0[i] le 0.04 then begin
-	;	ediff=1-etr0[i]-eref0[i]
-        ;        eswdiff=0.04-ediff
-        ;        etr0[i]=etr0[i]-eswdiff/2.
-        ;        eref0[i]=eref0[i]-eswdiff/2.
-	;endif
     endif else if reg[i] eq 2 and r[i] eq r[i] and r[i-1] eq r[i-1] then begin
         ntr0[i]=ntr0[i-1]
         nref0[i]=nref0[i-1]
@@ -142,20 +128,6 @@ endif else begin
         em0[i]=exp(18.7905*r_ts^2-10.5773*r_ts+3.21888)
         kappa_ref0[i]=exp(-13.5408*r_ts^2+6.52448*r_ts+2.01490); - this is for delta=7.5 @ V2
         esw0[i]=exp(2.73671*r_ts^2-0.477155*r_ts-3.21888)
-        ;if r[i]/78.5 lt 1. then nen0[i]=1-0.75-ntr0[i]-nref0[i]; Full: 1-0.70-ntr0[i]-nref0[i]
-        ;if r[i]/78.5 lt 1. then een0[i]=1-0.04-etr0[i]-eref0[i]; Full: 1-0.06-etr0[i]-eref0[i]
-        ;if 1-ntr0[i]-nref0[i] le 0.65 then begin
-        ;        ndiff=1-ntr0[i]-nref0[i]
-        ;        nswdiff=0.65-ndiff
-        ;        ntr0[i]=ntr0[i]-nswdiff/2.
-        ;        nref0[i]=nref0[i]-nswdiff/2.
-        ;endif
-        ;if 1-etr0[i]-eref0[i] le 0.04 then begin
-        ;        ediff=1-etr0[i]-eref0[i]
-        ;        eswdiff=0.04-ediff
-        ;        etr0[i]=etr0[i]-eswdiff/2.
-        ;        eref0[i]=eref0[i]-eswdiff/2.
-        ;endif
      endif else if M2[i] lt 0.64 and r[i] eq r[i] and r[i-1] eq r[i-1] then begin
        ntr0[i]=ntr0[i-1]
        nref0[i]=nref0[i-1]
@@ -171,7 +143,7 @@ endif else begin
      if M2[i] lt 0.64 and r[i] eq r[i] and r[i-1] eq r[i-1] and vshock0[i-1] eq 0. then vshock0[i]=v[i]
      if M2[i] lt 0.64 and r[i] eq r[i] and r[i-1] eq r[i-1] and vshock0[i-1] gt 0. then vshock0[i]=vshock0[i-1]
   endfor  
-;stop
+
   nan=0./0.
 ; Ensuring only considering points starting from TS
   for i=1, num-2 do begin
@@ -180,8 +152,6 @@ endif else begin
      else ext[i]=0
   endfor
 endelse
-
-  if num lt 2000 then streamline_test, ext, r, nh, v, vr, vt, np, tp
 
   dist=where(ext gt -1.01 and ext lt -0.99,ct)
   r_in=round((r-r_lower)/dr) ; indices for radius
