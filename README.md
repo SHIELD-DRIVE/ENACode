@@ -1,6 +1,8 @@
 # ENACode
 ENA Code from Kornbleuth et al. (2018, 2020, 2023)
 
+If use in publication, please cite: Kornbleuth, M., Opher, M., Zank, G., et al. 2023, ApJL, 944, L47
+
 ENA model to generate synthetic ENA maps from an MHD solution
 
 Currently, ENA model configured for MHD-kinetic solutions derived from the Space Weather Modeling Framework (SWMF; Toth et al. 2005)
@@ -17,31 +19,31 @@ Input boundary (i.e. region) file is stored in secondary_files/input/boundaries.
 
 List of files in top directory:
 
-distribution_functions.pro: procedure with available distribution functions used in flux calculations
+-distribution_functions.pro: procedure with available distribution functions used in flux calculations
 
-ena_prod_trans.pro: calculates charge-exchange x-section and applies constants to integrand
+-ena_prod_trans.pro: calculates charge-exchange x-section and applies constants to integrand
 
-flux_and_counts.pro: sets up plotting procedure by reading in flux output from code
+-flux_and_counts.pro: sets up plotting procedure by reading in flux output from code
 
-get_limits.pro: reads in regions of the heliosphere from input file (boundaries.txt)
+-get_limits.pro: reads in regions of the heliosphere from input file (boundaries.txt)
 
-load_opher.pro: sets up different arrays used as structures for plasma and neutral solutions separately
+-load_opher.pro: sets up different arrays used as structures for plasma and neutral solutions separately
 
-load_parameters.pro: parameter file where flags are set for the code and input files are specified - always start with this!
+-load_parameters.pro: parameter file where flags are set for the code and input files are specified - always start with this!
 
-make_countrate_files_batch: batch script for running ENA code (see below)
+-make_countrate_files_batch: batch script for running ENA code (see below)
 
-make_countrate_files.pro: includes procedures for reading in input files, calculating ENA flux for each cell, integrating flux, and generating output - core of code!
+-make_countrate_files.pro: includes procedures for reading in input files, calculating ENA flux for each cell, integrating flux, and generating output - core of code!
 
-make_plots_batch: batch script for plotting ENA maps (see below)
+-make_plots_batch: batch script for plotting ENA maps (see below)
 
-plotter_eps.pro: procedure used to plot ENA flux in Mollweide projections
+-plotter_eps.pro: procedure used to plot ENA flux in Mollweide projections
 
-ps_off.pro: procedure used in plotting ENA maps
+-ps_off.pro: procedure used in plotting ENA maps
 
-ps_on.pro: procedure used in plotting ENA maps
+-ps_on.pro: procedure used in plotting ENA maps
 
-read_stream_g.pro: calculates extinction along streamlines, propagates ion ratios from termination shock along streamlines, interpolates to ENA code grid
+-read_stream_g.pro: calculates extinction along streamlines, propagates ion ratios from termination shock along streamlines, interpolates to ENA code grid
 
 To run the ENA code from the top directory, in the IDL command line use "@make_countrate_files_batch". For plotting the resultant ENA maps, in the IDL command line use "@make_plots_batch"
 
