@@ -147,7 +147,6 @@ common sensor_params, hi,lo, wt9, wt10, wt11, wt12, wt13, ultra
 
 ecentral=[lo.e.central,hi.e.central, ultra.e.central]
 g=[lo.g,hi.g,ultra.g]
-print, "HELLO!!!!!",  max(countrate_map(*,*,4))
 flux_map=countrate_map/ecentral[eband]/g[eband]
 print, max(flux_map(*,*,4))
 return
