@@ -2,7 +2,7 @@ pro plotter, map,filename, map_title, units, maxset, minset, band_num
 common plot_params,latmin,latmax,lonmin,lonmax,map_dlat,map_dlon,map_numlatlabels,map_lons,map_lonnames, onerange_flux_min, onerange_flux_max, onerange_cr_min, onerange_cr_max
 common grid_params,dtheta,dphi,dr,nphi,ntheta,phi_first,phi_last,theta_first,theta_last,ri_opher,rf_opher,ri_heerikhuisen,rf_heerikhuisen
 common plot_flags, onerange_flag,manual_onerange_flag, plot_log,plot_limited, manual_lim, manual_maxset, manual_minset,eps_plot, plot_scl,tail
-common model_names,models,num_models,pui_model,vasyliunas,ribbon, gdf
+common model_names,models,num_models, colde
 
 ; flips array upside down (so that it plots 0 theta at the top of the map)
 map1=fltarr(nphi,ntheta)  ;flipped for mappings nomenclature
