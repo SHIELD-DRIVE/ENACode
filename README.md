@@ -2,7 +2,7 @@
 
 All-sky maps of heliospheric **energetic neutral atom (ENA) flux** from 3D MHD simulations of the heliosphere, as seen from 1 AU in the energy bands of IBEX-Lo, IBEX-Hi and INCA/Ultra. For every direction on a 6° × 6° sky grid, the code sums the ENAs made by charge exchange in the heliosheath along the line of sight, and their losses on the way in.
 
-- **Three models:** single-ion with four ion populations from the termination shock (Kornbleuth et al. 2023), an extended single-ion model, and a multi-ion model (Kornbleuth et al. 2026).
+- **Three models:** single-ion with four ion populations from the termination shock (Kornbleuth et al. 2023), an extended single-ion model for low-energies (Galli et al. 2023), and a multi-ion model (Kornbleuth et al. 2026).
 - **Steady-state or time-dependent maps:** one MHD snapshot, or a series of snapshots giving maps per time window, with the ENA travel times taken into account.
 - **Fast and reproducible:** C++ with OpenMP and MPI; the maps are bit-identical for any number of cores and processes.
 - **Plotting:** sky maps in ecliptic J2000 coordinates (Python).
@@ -44,3 +44,9 @@ python3 enacpp/tools/ena_plot.py output/flux_band13.h5
 ## Contact
 
 Marc Kornbleuth, Boston University: [kmarc@bu.edu](mailto:kmarc@bu.edu)
+
+## References
+
+Kornbleuth, M., et al., ApJL, 944, L47, https://doi.org/10.3847/2041-8213/acb9e0
+Galli, A. et al., ApJL, 954, L24, https://doi.org/10.3847/2041-8213/aced9b
+Kornbleuth, M., et al., ApJ, 1004, 18, https://doi.org/10.3847/1538-4357/ae67fc
