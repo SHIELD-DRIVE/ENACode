@@ -27,12 +27,12 @@
 # =====================================================================================
 
 [run]
-output_dir = "cpp_output_esi_v2"   # where maps go (default "output"); --out DIR overrides
+output_dir = "secondary_files/output"   # where maps go (default "output"); --out DIR overrides
 
 [model]
 source = "standard"           # "standard" (BU MHD model) or "moscow" (Moscow model: region codes remapped;
                               #   single-ion model only). Default "standard".
-populations = "extended_si"   # the ENA model:
+populations = "four_population_ts"   # the ENA model:
                               #   "four_population_ts": single-ion, Kornbleuth+2023
                               #   "extended_si":        extended single-ion:
                               #                         4 neutral populations, ion-neutral relative speed,
@@ -173,10 +173,10 @@ allow_incomplete = false      # true only for tests on file slices (missing grid
 # time-dependent run that has [time_dependent.files].
 [[snapshot]]
 time = 0.0                    # a label for steady-state runs
-plasma = "opherwithneutralsplasmafinish.dat"
-neutral = "opherwithneutralsnhfinish.dat"
+plasma = "plasma.dat"
+neutral = "neutrals.dat"
 boundaries = "boundaries.txt"
-streamlines = "Streamlines/streamlines_kmhd_moscow_n1200_IB2AU_2AU.dat"
+streamlines = "streamlines.dat"
 # file = "snapshot_000.h5"    # with inputs.format = "hdf5" (instead of the four text files)
 
 # ---- Time-dependent maps (milestone 8): maps per energy band AND per output time window ----

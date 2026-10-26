@@ -14,7 +14,7 @@ All-sky maps of heliospheric **energetic neutral atom (ENA) flux** from 3D MHD s
 - HDF5 (C library)
 - MPI, optional (time-dependent runs on several processes)
 - Python 3 with numpy, h5py and matplotlib, for the maps and comparison tools
-- Tecplot 360 with PyTecplot, only for preparing input files from MHD solutions
+- Tecplot 360, only for preparing input files from MHD solutions (through PyTecplot, or in Tecplot's own batch mode)
 
 ## Quick start
 
@@ -36,7 +36,7 @@ python3 enacpp/tools/ena_plot.py output/flux_band13.h5
 
 ## Documentation
 
-- [User guide](enacpp/docs/ENA_USER_GUIDE.md): building on a workstation or on NASA's Athena, settings, steady-state and time-dependent runs, input preparation, sky maps, common problems.
+- [User guide](enacpp/docs/ENA_USER_GUIDE.md): building on a workstation or on NASA's Athena, settings, steady-state and time-dependent runs, input preparation (also on NASA's Aitken nodes), sky maps, common problems.
 - [Full reference](enacpp/docs/REFERENCE.md): every program, option and input check.
 - [`configs/all_settings.toml`](enacpp/configs/all_settings.toml): every setting with its default and explanation.
 - [Changes from the IDL code](enacpp/CHANGES_FROM_IDL.md): the code began as a port of an IDL code; this lists every difference.
