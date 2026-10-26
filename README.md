@@ -36,10 +36,10 @@ python3 enacpp/tools/ena_plot.py output/flux_band13.h5
 
 ## Documentation
 
-- [User guide](docs/ENA_USER_GUIDE.md): building on a workstation or on NASA's Athena, settings, steady-state and time-dependent runs, input preparation, sky maps, common problems.
-- [Full reference](docs/REFERENCE.md): every program, option and input check.
-- [`configs/all_settings.toml`](configs/all_settings.toml): every setting with its default and explanation.
-- [Changes from the IDL code](CHANGES_FROM_IDL.md): the code began as a port of an IDL code; this lists every difference.
+- [User guide](enacpp/docs/ENA_USER_GUIDE.md): building on a workstation or on NASA's Athena, settings, steady-state and time-dependent runs, input preparation, sky maps, common problems.
+- [Full reference](enacpp/docs/REFERENCE.md): every program, option and input check.
+- [`configs/all_settings.toml`](enacpp/configs/all_settings.toml): every setting with its default and explanation.
+- [Changes from the IDL code](enacpp/CHANGES_FROM_IDL.md): the code began as a port of an IDL code; this lists every difference.
 
 ## Contact
 
