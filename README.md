@@ -47,6 +47,6 @@ Marc Kornbleuth, Boston University: [kmarc@bu.edu](mailto:kmarc@bu.edu)
 
 ## References
 
-Kornbleuth, M., et al., ApJL, 944, L47, https://doi.org/10.3847/2041-8213/acb9e0
-Galli, A. et al., ApJL, 954, L24, https://doi.org/10.3847/2041-8213/aced9b
-Kornbleuth, M., et al., ApJ, 1004, 18, https://doi.org/10.3847/1538-4357/ae67fc
+- Kornbleuth, M., et al., ApJL, 944, L47, https://doi.org/10.3847/2041-8213/acb9e0
+- Galli, A. et al., ApJL, 954, L24, https://doi.org/10.3847/2041-8213/aced9b
+- Kornbleuth, M., et al., ApJ, 1004, 18, https://doi.org/10.3847/1538-4357/ae67fc
