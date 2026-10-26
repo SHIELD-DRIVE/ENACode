@@ -1,0 +1,90 @@
+# Run configuration for the multi-ion model (Kornbleuth+2026). Paths are
+# relative to this file: with enacpp/ placed in the top directory of the MI ENA
+# code, ../../secondary_files/input is the input directory. To reproduce the
+# results of the original IDL code, use the version 1.1 archive
+# (enacpp_v1.1_mi.zip, configs/run_mi_reference.toml).
+
+[run]
+output_dir = "cpp_output_mi"
+
+[model]
+source = "standard"
+populations = "multi_ion_inca"   # three ion fluids: SW, pu3 (supersonic-wind PUIs), pu2 (heliosheath PUIs)
+
+[grid]                     # grid points: theta = 0, 6, ..., 174; phi = 0, 6, ..., 354; r = 2, 4, ..., 1472
+dtheta = 6.0
+dphi = 6.0
+dr = 2.0
+r_inner = 2.0
+nr = 736
+
+[integration]
+r_lower = 2.0
+r_upper = 800.0
+radial_range = 0           # TS to HP (the only range of the multi-ion model)
+
+[physics]
+survival = true
+extinction = true          # only used for the cooling-length diagnostic in the multi-ion model
+kappa = 1.0
+kappa_pui = 1.0
+kappa_ref = 1.0
+kappa_ism = 1.0
+kappa_oh = 1.0
+survival_observer_r = 100.0
+fitted_esw = true          # SW temperature share from the fits (false: the constant 0.04)
+ts_detection = "regions"   # TS where a streamline enters region 3/6 from region 4 (required for this model)
+ts_reference = "computed"  # r_TS,V2: the 4 -> 3/6 change along the V2 trajectory
+v2_trajectory_file = "v2_trajectory_sim.txt"   # r theta phi, simulation frame; beyond 97 AU extrapolated linearly (last 5 AU)
+vshock = "first_below"     # v_shock: pu3 speed at the first point past the crossing below multi_ion.vshock_vmin_kms
+                           #   ("downstream": the pu3 speed vshock_offset_cells grid cells past the crossing)
+vshock_offset_cells = 2.0
+gap_fill_max_passes = 200
+
+[multi_ion]
+# TS partition fits: r' = ln(x), x capped at ts_cap.
+#   "compressed" (default): x = ((r - r_TS,V2)*ts_compress + r_TS,V2)/r_TS,V2, tailored to the
+#                hybrid model: it compresses the MI solution's wider range of TS
+#                distances onto the range the fits were derived for.
+#   "ratio":     x = r / r_TS,V2, strictly the MI solution's TS distances (for an MI solution with a smaller tail TS).
+ts_scaling = "compressed"
+ts_compress = 0.4222222222  # 38/90
+ts_cap = 1.62
+vshock_vmin_kms = 215.0     # "first_below" criterion for the pu3 speed
+# DSA injection energy E_l = 0.5 m_p u^2:
+#   "line_of_sight" (default): u = SW speed at radial index injection_k (4: 10 AU) on the cell's own line of
+#                   sight; E_l about 1-2 keV, consistent with Kornbleuth+2023 (about 0.8-1.2 keV)
+#   "streamline"    (option): u = SW speed just upstream of the region-based TS, carried along the streamline;
+#                   E_l about 0.5-0.8 keV: accelerated flux x0.44-0.49 at 3-8 keV, new component at 0.5-0.9 keV
+injection = "line_of_sight"
+injection_k = 4
+# Reconnection region ("INCA belt"). The radius and longitude limits are free parameters:
+# belt_r_max <= 0 removes the radius limit, belt_phi_min >= belt_phi_max the longitude limit.
+belt = true
+belt_r_max = 550.0
+belt_phi_min = 30.0
+belt_phi_max = 330.0
+belt_ratio_min = 1.0       # m vA^2 / kT_pu2 >= this
+belt_mva2_max = 0.5        # keV; m vA^2 < this
+belt_accel_frac = 0.00087  # accelerated ions (SW slot), fraction of the total density
+belt_pu2_frac = 0.013      # non-accelerated ions (pu2 slot), fraction of the total density
+belt_t_pu2_factor = 53.0   # T_pu2 slot = 53 * T_pu2
+belt_t_sw_factor = 177.0   # T_SW slot = 177 * T_pu2
+belt_kappa_pu2 = 8.6
+belt_kappa_sw = 8.15
+
+[bands]
+run = [9, 13, 14]
+eres = 10
+
+[inputs]
+dir = "../../secondary_files/input"
+format = "ascii"
+# Column layouts default to the multi-ion files (25 plasma columns, 41 neutral columns, 25 streamline variables).
+
+[[snapshot]]
+time = 0.0
+plasma = "opherwithneutralsplasmafinish.dat"
+neutral = "opherwithneutralsnhfinish.dat"
+boundaries = "boundaries.txt"
+streamlines = "Streamlines/streamlines_MIFLEKS_ImprovedHP_22yravg_100yrs_2AU_withtemp_0to354.dat"

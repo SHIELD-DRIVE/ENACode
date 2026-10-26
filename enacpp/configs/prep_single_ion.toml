@@ -1,0 +1,133 @@
+# Input preparation for the single-ion model (four_population_ts) with tools/tecplot_prep.py:
+# for every snapshot, fix the neutral solution (step 1, the C++ program ena_fixneutrals), save it
+# as .szplt (1b), interpolate the neutral and MHD solutions onto the spherical ENA grid (2a-2d),
+# write the neutral, plasma and boundaries files and the streamline field (3), and trace the
+# streamlines through that field (4, the C++ program ena_trace), with the macros in
+# configs/macros/single_ion/.
+#
+#   tec360-env -- python3 enacpp/tools/tecplot_prep.py enacpp/configs/prep_single_ion.toml
+#
+# ena_fixneutrals is built with the ENA code (in the build folder next to ena_run). It does what
+# the macro 1_fix_neutrals.mcr does, with identical results, in under a minute instead of about
+# 25. ena_trace traces the streamlines reproducibly (Tecplot's streamtraces differ from run to
+# run, even on the same field). prep_single_ion_tecplot.toml does steps 1 and 4 in Tecplot instead.
+#
+# Paths are relative to the directory the driver is started in (the top directory of the ENA
+# code). The macros contain no paths: every file reaches them as a macro variable, so the same
+# macros work in any directory and on any machine.
+
+[run]
+first_index = 0               # the first snapshot (0 = the first file of the listings below)
+# count = 24                  # how many; default: as many as the listings below provide
+
+# ---- inputs of each snapshot: pattern = "...{index:03}...", glob = "..." (sorted by name),
+# ---- list = "file with one path per line, in snapshot order", or file = "..." (the same for all)
+[input.mhd]
+glob = "mhd/3d__var_2_t*.szplt"                 # EXAMPLE: the MHD solutions (.szplt), sorted by name = by time
+macro_variable = "MHDFILE"
+
+[input.neutral_source]
+glob = "neutrals/3d_var_region0_1_t*_amrex.dat" # EXAMPLE: the neutral solutions, one per MHD solution, same order
+macro_variable = "NEUTRALSRC"
+
+[input.grid]
+file = "grid/spherical_grid.plt"                # EXAMPLE: the spherical ENA grid that everything is interpolated onto
+macro_variable = "GRIDFILE"
+
+# ---- intermediate files (in the work folder; deleted once the snapshot is done)
+[work]
+dir = "prep_work"
+keep = false                                    # true: keep the intermediate files
+
+[work_file.neutral_plt]
+file = "neutral_fixed_{index:03}.plt"           # written by ena_fixneutrals (step 1), loaded for step 1b
+macro_variable = "NEUTRALPLT"
+
+[work_file.stream_field]
+file = "stream_field_{index:03}.dat"            # written by step 3 (the grid with the streamline variables), read by step 4
+macro_variable = "STREAMFIELD"
+
+[work_file.neutral_fixed]
+file = "neutral_fixed_{index:03}.szplt"         # written by step 1b (.szplt), read by step 2a
+macro_variable = "NEUTRALFIXED"
+
+# ---- the macros, in order. load = "NAME" first loads that input into a new layout, as is done
+# ---- by hand before running the macro.
+[[step]]                                        # step 1 in C++: the equations of 1_fix_neutrals.mcr
+name = "fix neutrals (C++)"
+command = ["enacpp/build/ena_fixneutrals", "{NEUTRALSRC}", "{NEUTRALPLT}"]   # CHECK: where ena_fixneutrals was built
+
+[[step]]
+name = "save as szplt"
+load = "neutral_plt"
+macro = "enacpp/configs/macros/single_ion/1b_save_szplt.mcr"
+
+[[step]]                                        # steps 2a-2d: your interpolating_files.mcr in four parts,
+name = "read neutrals"                          #   each timed on its own
+load = "grid"
+macro = "enacpp/configs/macros/single_ion/2a_read_neutrals.mcr"
+
+[[step]]
+name = "interpolate neutrals"
+macro = "enacpp/configs/macros/single_ion/2b_interpolate_neutrals.mcr"
+
+[[step]]
+name = "read MHD"
+macro = "enacpp/configs/macros/single_ion/2c_read_mhd.mcr"
+
+[[step]]
+name = "interpolate MHD"
+macro = "enacpp/configs/macros/single_ion/2d_interpolate_mhd.mcr"
+
+[[step]]
+name = "calculate files"
+macro = "enacpp/configs/macros/single_ion/3_calculate_files_trace.mcr"
+
+[[step]]                                        # step 4 in C++: the streamlines, from the macro's seeds, each pole once (1742)
+name = "trace streamlines (C++)"
+command = ["enacpp/build/ena_trace", "{STREAMFIELD}", "{STREAMFILE}", "--seeds", "enacpp/configs/streamline_seeds_2AU.txt"]   # CHECK: where ena_trace was built
+
+# ---- the output files, their macro variables, and what the checks expect
+[output]
+dir = "time_series"
+
+[grid]                                          # one row per cell in every grid file
+ntheta = 30                                     # theta = 0, 6, ..., 174 deg
+nphi = 60                                       # phi = 0, 6, ..., 354 deg
+nr = 736                                        # r = 2, 4, ..., 1472 AU
+
+[output_file.neutral]
+file = "neutral_{index:03}.dat"
+macro_variable = "NEUTRALFILE"
+kind = "grid"
+columns = 8                                     # n, T, i, j, k, theta, phi, r
+strip_header = true                             # Tecplot writes a TITLE/VARIABLES/ZONE header; the ENA files have none
+theta_index_column = 3                         # the column of the theta index i (1-based)
+theta_index_max = 29                            # drop rows with i > 29: the macro grid runs over i = 0-59, and 30-59
+                                                #   (theta > 180 deg) repeat the sky (as done by hand)
+
+[output_file.plasma]
+file = "plasma_{index:03}.dat"
+macro_variable = "PLASMAFILE"
+kind = "grid"
+columns = 12                                    # n, T, vr, vtheta, vphi, vt, i, j, k, theta, phi, r
+strip_header = true
+theta_index_column = 7                         # the column of the theta index i (1-based)
+theta_index_max = 29                            # drop rows with i > 29: the macro grid runs over i = 0-59, and 30-59
+                                                #   (theta > 180 deg) repeat the sky (as done by hand)
+
+[output_file.boundaries]
+file = "boundaries_{index:03}.txt"
+macro_variable = "BOUNDARYFILE"
+kind = "grid"
+columns = 10                                    # region, i, j, k, theta, phi, r, Bx, By, Bz
+strip_header = true
+theta_index_column = 2                         # the column of the theta index i (1-based)
+theta_index_max = 29                            # drop rows with i > 29: the macro grid runs over i = 0-59, and 30-59
+                                                #   (theta > 180 deg) repeat the sky (as done by hand)
+
+[output_file.streamlines]
+file = "streamlines_{index:03}.dat"
+macro_variable = "STREAMFILE"
+kind = "streamlines"                            # a Tecplot file: its header stays
+variables = 19                                  # X, Y, Z, U_x, U_y, U_z, nH, UxH, UyH, UzH, np, tp, vr, vtheta, vphi, vt, theta0, phi0, r0

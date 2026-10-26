@@ -1,0 +1,83 @@
+# Run configuration for the reference inputs (single-ion model).
+# Paths are relative to this file: with enacpp/ placed in the top directory of
+# the ENA code, ../../secondary_files/input is the input directory.
+
+[run]
+output_dir = "cpp_output"  # relative to the directory ena_run is started from
+# Any setting can also be overridden on the command line, e.g.
+#   ena_run run_reference.toml --set physics.fitted_esw=false
+# To reproduce the results of the original IDL code, use the version 1.0
+# archive (faithful mode; see CHANGES_FROM_IDL.md).
+
+[model]
+source = "standard"        # "standard" (BU) or "moscow"
+populations = "four_population_ts"
+
+[grid]                     # grid points: theta = 0, 6, ..., 174; phi = 0, 6, ..., 354; r = 2, 4, ..., 1472
+dtheta = 6.0
+dphi = 6.0
+dr = 2.0
+r_inner = 2.0
+nr = 736
+
+[integration]
+r_lower = 2.0
+r_upper = 800.0
+radial_range = 2
+
+[physics]
+survival = true
+extinction = true
+cold_electrons = true
+kappa = 1.0
+kappa_pui = 1.0
+kappa_ref = 1.0
+kappa_ism = 1.0
+kappa_oh = 1.0
+survival_observer_r = 100.0  # AU; survival exponent accumulated from here outward
+# Options:
+fitted_esw = true          # fitted E_sw (false: the constant 0.04)
+shock_shift = "none"       # "none", "scalar" or "vector" shift for the Maxwellian populations
+ts_detection = "regions"   # "regions" (boundaries.txt), "mach" (M^2 < 0.64), "moscow_column" (Moscow model)
+# r_TS,V2 is computed as the first TS crossing along the Voyager 2 trajectory (simulation frame):
+v2_trajectory_file = "v2_trajectory_sim.txt"   # columns r [AU], theta, phi [deg]; relative to this file
+# v2_direction = [THETA, PHI]  # alternative: a fixed direction (degrees)
+# ts_reference = "constant"    # force the constant below even when a V2 path is given
+ts_reference_r = 78.5      # AU, r_TS,V2 when it is not computed (Moscow model: 82)
+gap_fill_max_passes = 200  # upper limit on gap-fill passes
+vshock = "first_below"     # regions TS: v_shock = flow speed at the first point past the crossing with M^2 < 0.64
+                           #   ("downstream": the flow speed vshock_offset_cells grid cells past the crossing;
+                           #    "crossing": the speed at the crossing point, version 2.0, for comparison only)
+vshock_offset_cells = 2.0  # used by "downstream", and by "first_below" if M^2 < 0.64 is never reached
+
+[bands]
+run = [13]                 # bands to compute
+eres = 10                  # energy steps per band
+
+[inputs]
+dir = "../../secondary_files/input"
+format = "ascii"
+
+# Column layouts. These are the defaults, written out for reference.
+[inputs.plasma]
+columns = ["n", "T", "vr", "vtheta", "vphi", "vt", "i", "j", "k", "theta", "phi", "r"]
+units   = ["", "", "km/s", "km/s", "km/s", "km/s", "", "", "", "", "", ""]
+
+[inputs.neutral]
+columns = ["n", "T", "i", "j", "k", "theta", "phi", "r"]
+
+[inputs.boundaries]
+columns = ["region", "i", "j", "k", "theta", "phi", "r", "Bx", "By", "Bz"]
+
+[[snapshot]]
+time = 0.0
+plasma = "opherwithneutralsplasmafinish.dat"
+neutral = "opherwithneutralsnhfinish.dat"
+boundaries = "boundaries.txt"
+streamlines = "Streamlines/streamlines_kmhd_ChikaTD_2010_IB2AU_2AU.dat"
+
+# For a time-dependent run, add one [[snapshot]] per time (in years), e.g.
+# [[snapshot]]
+# time = 0.5
+# plasma = "t001/opherwithneutralsplasmafinish.dat"
+# ...

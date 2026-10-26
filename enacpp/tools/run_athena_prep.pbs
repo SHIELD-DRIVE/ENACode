@@ -1,0 +1,63 @@
+#!/bin/bash
+# Prepare ENA input files from a series of MHD solutions on Athena, with Tecplot macros and the
+# C++ step 1 (tools/tecplot_prep.py and configs/prep_single_ion.toml).
+#
+# Needs: PyTecplot (e.g. in a virtual environment, see PYENV below), ena_fixneutrals built on
+# Athena (set its path in the command = [...] line of the configuration), and a Tecplot version
+# that runs on the compute nodes. Status 2026-10-22: tecplot/2025r2 aborts at startup on the
+# compute nodes ("FATAL FIPS SELFTEST FAILURE"; reported to NAS); tecplot/2023r2 starts, but its
+# MHD interpolation did not finish within 20 minutes (2025 R2 on the workstation: 81 s).
+#
+# Athena jobs get whole nodes (place=scatter:excl), so a job is charged for the full node however
+# few cores it uses. WORKERS > 1 runs that many Tecplot processes side by side, each on its own
+# block of snapshots; each one uses a Tecplot license, so keep WORKERS within the number of
+# licenses NAS allows to run at once (ask NAS support). WORKERS=1 always works.
+# A snapshot whose files all exist is skipped, so the job can be resubmitted after a stop.
+#
+# Submit from the top directory (the one holding enacpp/):   qsub enacpp/tools/run_athena_prep.pbs
+#
+#PBS -N ena_prep
+#PBS -q normal
+#PBS -l select=1:ncpus=256:model=tur_ath
+#PBS -l walltime=24:00:00
+#PBS -j oe
+#PBS -W group_list=s8440
+# Notes on the lines above (PBS allows no comment after a directive on its line):
+#   walltime: about (minutes per snapshot) x (snapshots) / WORKERS, plus a margin; the log gives
+#   the time per snapshot after the first one.
+#   group_list: the group the job is charged to.
+
+cd "$PBS_O_WORKDIR"
+LOG=ena_prep_${PBS_JOBID%%.*}.log                 # live log; follow with: tail -f ena_prep_<job>.log
+exec > "$LOG" 2>&1
+
+# a bash job script does not have the "module" command on Athena (the csh login sets it up for csh)
+for init in /opt/cray/pe/modules/default/init/bash /usr/share/Modules/init/bash \
+            /usr/share/modules/init/bash /etc/profile.d/modules.sh; do
+  if [ -f "$init" ]; then source "$init"; break; fi
+done
+module unload tecplot 2> /dev/null
+module load tecplot/2025r2                        # CHECK: the Tecplot module
+PYENV=$HOME/pytecplot-env                         # CHECK: the virtual environment with PyTecplot
+[ -f "$PYENV/bin/activate" ] && source "$PYENV/bin/activate"
+
+CONFIG=enacpp/configs/prep_single_ion.toml
+FIRST=0                                           # snapshot indices to prepare (inclusive)
+LAST=23
+WORKERS=1                                         # Tecplot processes at once (licenses permitting)
+
+echo "=== $(hostname), $(date): snapshots $FIRST-$LAST, $WORKERS worker(s)"
+n=$((LAST - FIRST + 1))
+per=$(( (n + WORKERS - 1) / WORKERS ))
+for w in $(seq 0 $((WORKERS - 1))); do
+  a=$((FIRST + w * per)); b=$((a + per - 1)); [ $b -gt $LAST ] && b=$LAST
+  [ $a -gt $LAST ] && break
+  # each worker writes its own log too, so the lines of different workers do not interleave
+  tec360-env -- python3 -u enacpp/tools/tecplot_prep.py "$CONFIG" --first $a --last $b > "ena_prep_worker${w}.log" 2>&1 &
+  echo "worker $w: snapshots $a-$b (log ena_prep_worker${w}.log)"
+done
+wait
+echo "=== all workers finished $(date)"
+tail -n 2 ena_prep_worker*.log
+echo "=== final check of all files"
+python3 enacpp/tools/tecplot_prep.py "$CONFIG" --first $FIRST --last $LAST --check-only | tail -n 3

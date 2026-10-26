@@ -1,0 +1,85 @@
+# Run configuration for the extended single-ion model (four neutral populations,
+# ion-neutral relative speed, heliosheath-created PUIs). Paths are relative to
+# this file: with enacpp/ placed in the top directory of the extended SI ENA
+# code, ../../secondary_files/input is the input directory. To reproduce the
+# results of the original IDL code, use the version 1.2 archive
+# (enacpp_v1.2_esi.zip, configs/run_esi_reference.toml).
+
+[run]
+output_dir = "cpp_output_esi_v2"
+
+[model]
+source = "standard"
+populations = "extended_si"  # one ion fluid with the TS partition, 41-column neutral file
+
+[grid]                     # grid points: theta = 0, 6, ..., 174; phi = 0, 6, ..., 354; r = 2, 4, ..., 1472
+dtheta = 6.0
+dphi = 6.0
+dr = 2.0
+r_inner = 2.0
+nr = 736                   # 1 + floor((1500 - 30)/2): the model's radial range over dr
+
+[integration]
+r_lower = 2.0
+r_upper = 800.0
+radial_range = 0           # TS to HP (the only range of this model)
+
+[physics]
+survival = true            # losses counted in regions 3 and 6 from survival_observer_r outward
+extinction = true          # streamline extinction of the TS populations (Kornbleuth+2021)
+cold_electrons = true
+kappa = 1.0
+kappa_pui = 1.0
+kappa_ref = 1.0
+kappa_ism = 1.0
+kappa_oh = 1.0             # also the kappa of the heliosheath PUIs and of the SW in region 6
+survival_observer_r = 100.0
+fitted_esw = true          # SW temperature share from the fits (false: the constant 0.04)
+ts_detection = "regions"   # TS where a streamline enters region 3/6 from region 4 ("mach": the M^2 < 0.64 rule)
+ts_reference = "computed"  # r_TS,V2: the 4 -> 3/6 change along the V2 trajectory ("constant": ts_reference_r)
+v2_trajectory_file = "v2_trajectory_sim.txt"   # r theta phi, simulation frame; beyond 97 AU extrapolated linearly (last 5 AU)
+ts_reference_r = 78.5      # AU, used with ts_reference = "constant"
+vshock = "first_below"     # v_shock: flow speed at the first point past the crossing with M^2 < 0.64
+                           #   ("downstream": the flow speed vshock_offset_cells grid cells past the crossing)
+vshock_offset_cells = 2.0
+# The DSA injection energy is E_l = 1/2 m_p v^2 with v the flow speed at the last streamline point
+# inside 12 AU; it is not a setting.
+# kappa_heliosheath_pui = 1.0  # kappa of the heliosheath-created PUIs in region 3 (default: kappa_oh)
+
+# Ions of region 6 (open heliosheath), set separately from region 3. Every default reproduces the
+# region-3 treatment, so leaving this section out gives the version 2.4 populations. Survival losses
+# are counted in regions 3 and 6 whatever is set here.
+[region6]
+kappa_transmitted = 1.0        # default: physics.kappa_pui
+kappa_reflected = 1.0          # default: physics.kappa_ref
+kappa_heliosheath_pui = 1.0    # default: physics.kappa_oh
+kappa_sw = 1.0                 # default: physics.kappa_oh
+# Accelerated ions: a fraction f of the transmitted PUIs, reflected PUIs, heliosheath PUIs and SW
+# takes a fraction e of their pressure, with kappa accelerated_kappa; the rest keep
+# T_i (1 - e)/(1 - f). Density and pressure are conserved; e = f keeps the temperatures, e > f makes
+# the accelerated ions hotter. Written as the component region6_accelerated (legacy tag Acc6).
+# The DSA-accelerated PUIs are not changed.
+accelerated_fraction = 0.0     # f, 0 <= f < 1 (0: no accelerated ions)
+accelerated_energy_share = 0.0 # e, 0 <= e < 1 (needs f > 0)
+accelerated_kappa = 1.6
+accelerated_from = "each_population"  # "each_population": every population keeps its own accelerated
+                                      #   part at (e/f) x its temperature; "pooled": one population at
+                                      #   (e/f) x the density-weighted mean temperature (cooler than the
+                                      #   transmitted/reflected PUIs where the SW dominates the density)
+
+[bands]
+run = [3, 4, 5, 6, 7]      # IBEX-Lo 3-7 at the CG-corrected central energies
+eres = 10
+
+[inputs]
+dir = "../../secondary_files/input"
+format = "ascii"
+# Column layouts default to the extended SI files (12 plasma columns, 41 neutral
+# columns, 19 streamline variables); see README.md to override them.
+
+[[snapshot]]
+time = 0.0
+plasma = "opherwithneutralsplasmafinish.dat"
+neutral = "opherwithneutralsnhfinish.dat"
+boundaries = "boundaries.txt"
+streamlines = "Streamlines/streamlines_kmhd_moscow_n1200_IB2AU_2AU.dat"

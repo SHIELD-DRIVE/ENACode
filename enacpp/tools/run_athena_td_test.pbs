@@ -1,0 +1,87 @@
+#!/bin/bash
+# Time-dependent test on NASA HECC Athena (PBS), with MPI.
+#
+# Uses the steady-state limit test: one steady-state snapshot repeated N times
+# (td_repeat_snapshot.py), so the maps can be checked against the steady-state maps
+# (td_vs_steady.py) and against the same run on the workstation (compare_runs.py).
+# The job runs the same time-dependent map four ways, which must all give bit-identical
+# files:
+#   A  text inputs, 16 ranks x 16 threads
+#   B  HDF5 inputs, 16 ranks x 16 threads   (after converting the snapshot with ena_convert)
+#   C  HDF5 inputs,  4 ranks x 64 threads
+#   D  HDF5 inputs,  1 rank  x 256 threads
+# and compares their count-rate files bit for bit (no Python needed on Athena).
+#
+# Before submitting (from the top directory, the one holding enacpp/):
+#   python3 enacpp/tools/td_repeat_snapshot.py enacpp/configs/run_esi.toml td_repeat24.toml --n 24 --dt 0.5 --start 2000 --cadence 1
+#   python3 enacpp/tools/use_hdf5.py enacpp/configs/td_repeat24.toml td_repeat24_h5.toml snapshots_h5
+#   qsub enacpp/tools/run_athena_td_test.pbs
+#
+#PBS -N ena_td_test
+#PBS -q normal
+#PBS -l select=1:ncpus=256:mpiprocs=16:ompthreads=16:model=tur_ath
+#PBS -l walltime=01:00:00
+#PBS -j oe
+# Notes on the lines above (PBS allows no comment after a directive on its line):
+#   select: one whole Athena Turin node (256 cores); the job starts its own layouts below.
+#   To charge a group, add a line "#PBS -W group_list=yourgroup".
+
+cd "$PBS_O_WORKDIR"
+# Live log: everything below goes to ena_td_test_<job number>.log as it happens.
+LOG=ena_td_test_${PBS_JOBID%%.*}.log
+exec > "$LOG" 2>&1
+
+# The MPI build: GCC through the Cray wrapper, with cray-hdf5 and cray-mpich
+# (env CXX=CC cmake -S enacpp -B enacpp/build_mpi ...). No "module purge" on a Cray system.
+module swap PrgEnv-intel PrgEnv-gnu
+module load cray-hdf5
+
+STEADY=enacpp/configs/run_esi.toml         # the steady-state configuration (for the HDF5 conversion)
+TD=enacpp/configs/td_repeat24.toml          # written by td_repeat_snapshot.py (text inputs)
+TDH5=enacpp/configs/td_repeat24_h5.toml     # written by use_hdf5.py (HDF5 inputs)
+BANDS=3,6,9,13,14
+EXE=enacpp/build_mpi
+
+export OMP_PLACES=cores
+export OMP_PROC_BIND=close                  # each rank's threads on the cores of its own block
+
+# launch R T command...: R ranks on this node, T cores (and threads) per rank.
+# Cray PALS mpiexec: --ppn ranks per node, --depth cores per rank, --cpu-bind depth pins each
+# rank to its own block of T cores.
+launch() {
+  local R=$1 T=$2; shift 2
+  export OMP_NUM_THREADS=$T
+  mpiexec -n "$R" --ppn "$R" --depth "$T" --cpu-bind depth "$@"
+}
+
+echo "=== node $(hostname), $(date)"
+lscpu | grep -E "Model name|^CPU\(s\)|Thread\(s\) per core|NUMA node\(s\)"
+module list 2>&1
+
+echo "=== converting the snapshot to HDF5 -> snapshots_h5"
+start=$SECONDS
+launch 1 1 stdbuf -oL $EXE/ena_convert "$STEADY" snapshots_h5 --skip-existing
+echo "conversion: exit status $?, $((SECONDS - start)) s"
+
+run() {  # run LABEL CONFIG RANKS THREADS
+  local label=$1 cfg=$2 R=$3 T=$4
+  echo "=== run $label: $cfg, $R ranks x $T threads -> athena_td_$label"
+  local start=$SECONDS
+  launch "$R" "$T" stdbuf -oL $EXE/ena_run "$cfg" --bands "$BANDS" --threads "$T" --out "athena_td_$label"
+  echo "run $label: exit status $?, $((SECONDS - start)) s"
+}
+run A_text_16x16 "$TD"   16 16
+run B_h5_16x16   "$TDH5" 16 16
+run C_h5_4x64    "$TDH5"  4 64
+run D_h5_1x256   "$TDH5"  1 256
+
+echo "=== bit-for-bit comparison of the count-rate files with run A"
+for other in B_h5_16x16 C_h5_4x64 D_h5_1x256; do
+  n=0; differing=0
+  for f in athena_td_A_text_16x16/*.dat; do
+    n=$((n + 1))
+    cmp -s "$f" "athena_td_$other/$(basename "$f")" || { echo "  $other differs: $(basename "$f")"; differing=1; }
+  done
+  [ $differing -eq 0 ] && echo "  $other: all $n .dat files bit-identical to A"
+done
+echo "=== done $(date)"

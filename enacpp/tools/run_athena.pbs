@@ -1,0 +1,52 @@
+#!/bin/bash
+# Time-dependent production run on NASA HECC Athena (PBS), with MPI.
+# Template: set the configuration, the bands, the layout and the walltime below.
+# The layout of run_athena_td_test.pbs (16 ranks x 16 threads) was checked on Athena first.
+#
+# Build first (once, login node, each command on its own line; csh):
+#   module swap PrgEnv-intel PrgEnv-gnu
+#   module load cray-hdf5
+#   env CXX=CC cmake -S enacpp -B enacpp/build_mpi -DHDF5_ROOT=$HDF5_DIR -DCMAKE_CXX_FLAGS=-I$HDF5_DIR/include
+#   cmake --build enacpp/build_mpi -j 8
+# Submit from the top directory (the one holding enacpp/):
+#   qsub enacpp/tools/run_athena.pbs
+#
+# Layout: RANKS x THREADS = 256 (one Turin node). More ranks with fewer threads is usually
+# faster (reading and streamline processing of a snapshot are mostly serial), as long as
+# memory allows: time_dependent.memory_gb is per rank. The maps do not depend on the layout.
+#
+#PBS -N ena_td
+#PBS -q normal
+#PBS -l select=1:ncpus=256:mpiprocs=16:ompthreads=16:model=tur_ath
+#PBS -l walltime=02:00:00
+#PBS -j oe
+# Notes on the lines above (PBS allows no comment after a directive on its line):
+#   mpiprocs and ompthreads: the RANKS and THREADS below.
+#   To charge a group, add a line "#PBS -W group_list=yourgroup".
+
+cd "$PBS_O_WORKDIR"
+LOG=ena_td_${PBS_JOBID%%.*}.log              # live log; follow with: tail -f ena_td_<job>.log
+exec > "$LOG" 2>&1
+
+module swap PrgEnv-intel PrgEnv-gnu          # no "module purge" on a Cray system
+module load cray-hdf5
+
+CONFIG=enacpp/configs/my_td_run.toml         # the time-dependent configuration (HDF5 snapshots recommended)
+BANDS=3,6,9,13,14
+OUT=td_out
+RANKS=16
+THREADS=16
+
+export OMP_NUM_THREADS=$THREADS
+export OMP_PLACES=cores
+export OMP_PROC_BIND=close
+
+# Optional one-time conversion of the text snapshots to HDF5 (skip if already done):
+# mpiexec -n $RANKS --ppn $RANKS --depth $THREADS --cpu-bind depth enacpp/build_mpi/ena_convert my_ascii_run.toml snapshots_h5 --skip-existing
+
+echo "=== $(hostname), $(date): $RANKS ranks x $THREADS threads"
+start=$SECONDS
+# Cray PALS mpiexec: --ppn ranks per node, --depth cores per rank, --cpu-bind depth pins each rank
+mpiexec -n $RANKS --ppn $RANKS --depth $THREADS --cpu-bind depth \
+  stdbuf -oL enacpp/build_mpi/ena_run "$CONFIG" --bands "$BANDS" --threads $THREADS --out "$OUT"
+echo "exit status $?, $((SECONDS - start)) s; done $(date)"

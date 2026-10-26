@@ -1,0 +1,67 @@
+# Plot settings for tools/ena_plot.py.
+#     python3 enacpp/tools/ena_plot.py OUT/flux_band*.h5 --config enacpp/configs/plot_settings.toml
+# Command-line options override this file (e.g. --view tail, --scale 1.8, --vmin 0 --vmax 12).
+# Every setting is optional: left out, it takes the default shown.
+
+# ---- the main settings ----
+view = "nose"            # map centre: "nose" (upwind, 255.4 / +5.2: UPWIND, V1, V2 marked),
+                         #   "tail" (downwind, 75.4 / -5.2: DOWNWIND marked) or "ecliptic" (lon 0, lat 0: all marked)
+# center = [255.0, 0.0]  # any other centre [lon, lat], ecliptic deg (overrides view)
+scale = 1.0              # flux multiplied by this; the title then says "(Flux x 1.8)"
+# vmin = 0.0             # colour-bar minimum and maximum for every map (left out: the map's own min and max);
+# vmax = 12.0            #   values outside take the end colours
+component = "total"      # transmitted, reflected, accelerated, heliosheath_pui, solar_wind, ne4, neu,
+                         #   region6_accelerated, total (extended single-ion); pu2 (multi-ion)
+
+# Colour-bar limits per band: band = [min, max]. Used when vmin/vmax are
+# not given. These are the defaults (maxima for bands 9-17, minima 0); a band listed here replaces
+# its default, other bands keep theirs. Bands without limits (0-8 by default) use the map's own min and max,
+# rounded outwards so the colour-bar labels are exact (e.g. 62.8-186.3 -> 62-190).
+[band_limits]
+9 = [0.0, 265.0]
+10 = [0.0, 140.0]
+11 = [0.0, 60.0]
+12 = [0.0, 30.0]
+13 = [0.0, 12.0]
+14 = [0.0, 0.90]
+15 = [0.0, 0.08]
+16 = [0.0, 0.025]
+17 = [0.0, 0.009]
+
+# ---- more options ----
+[plot]
+projection = "mollweide" # "mollweide" or "hammer"
+log = false              # true: log colour scale
+cmap = "jet"             # matplotlib colour map
+legend_style = "auto"    # colour-bar numbers: "integer" (e.g. 190), "float" (nearest hundredth, e.g. 0.85),
+                         #   "exponent" (mantissa to the nearest hundredth, e.g. 9.00e-03) or "auto" (integer for
+                         #   maxima >= 10, float for >= 0.1, exponent below)
+common_range = false     # true: one colour range per band over all files plotted together
+# limits = [-60.0, 60.0, -45.0, 45.0]   # only part of the sky: lonmin, lonmax, latmin, latmax relative to the
+                         #   centre, longitude positive to the east (left)
+boxes = true             # black boxes over regions with missing flux (time-dependent windows)
+grid = true
+grid_dlon = 30.0
+grid_dlat = 30.0
+edge_meridians = 4.0     # extra meridians this far either side of the map edge (0: none)
+lon_labels = "signed"    # "signed" (-180..180) or "0-360"
+idl = false              # true: the placement of the original IDL plotting code (no rotation), for comparison only
+markers_nose = ["UPWIND", "V1", "V2"]
+markers_tail = ["DOWNWIND"]
+markers_ecliptic = ["UPWIND", "DOWNWIND", "V1", "V2"]
+fontsize = 12
+figsize = [9.0, 6.0]     # inches
+format = "png"           # png, pdf, eps, svg
+dpi = 200
+# out = "maps"           # output directory (default: next to each input file)
+
+# Marker positions, ecliptic [lon, lat] deg. UPWIND and DOWNWIND come from the frame (below) unless given here.
+[markers]
+V1 = [254.0, 35.0]
+V2 = [289.0, -32.0]
+
+# The simulation frame (z: solar rotation axis; x 5 deg above the ISM flow). Change only for another MHD frame.
+[frame]
+flow_sim = [26.3, 0.3, -2.3]     # km/s, ISM flow in the simulation frame
+flow_ecliptic = [75.4, -5.2]     # the same direction, ecliptic J2000 lon, lat (deg)
+solar_axis = [7.25, 75.76]       # inclination of the solar equator and its ascending node, J2000 (deg)

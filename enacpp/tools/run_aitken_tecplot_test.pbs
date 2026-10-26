@@ -1,0 +1,72 @@
+#!/bin/bash
+# Times the two slow Tecplot parts of the input preparation (the neutral and the MHD interpolation)
+# on an Aitken Rome or Milan node, in Tecplot's own batch mode (no Python). NAS reports that
+# Tecplot 2025 R2 runs on these nodes (on Athena's Turin nodes it aborts with a FIPS error).
+# On the workstation, 2025 R2 takes about 2.5 minutes for the neutral and 1.5 for the MHD
+# interpolation (from a .szplt neutral file).
+#
+# Submit from a Pleiades front end (pfe), in the folder with the test macros:
+#   python3 enacpp/tools/prep_batch_test.py GRID neutral_fixed_000.szplt --mhd MHD.szplt --macro-only
+#   qsub enacpp/tools/run_aitken_tecplot_test.pbs
+# For a Milan node, change rom_ait to mil_ait in the select line. Step 1 is done by
+# ena_fixneutrals now, so test_step1.mcr is run only when RUN_STEP1=yes below.
+# The results are in tecplot_test.o<jobid>.
+# The results are in tecplot_test.o<jobid>.
+#PBS -N tecplot_test
+#PBS -q normal
+#PBS -l select=1:ncpus=128:ompthreads=128:model=rom_ait
+#PBS -l walltime=03:00:00
+#PBS -j oe
+#PBS -W group_list=s8440
+
+# CHECK: the Tecplot module to test (module avail tecplot)
+MODULE=tecplot/2025r2
+RUN_STEP1=no
+
+cd "$PBS_O_WORKDIR"
+# a bash job script may not have the "module" command (the csh login sets it up only for
+# csh), so set it up here; then replace whatever Tecplot module the login loaded with $MODULE
+for init in /opt/cray/pe/modules/default/init/bash /usr/share/Modules/init/bash \
+            /usr/share/modules/init/bash /etc/profile.d/modules.sh; do
+  if [ -f "$init" ]; then source "$init"; break; fi
+done
+type module > /dev/null 2>&1 || { echo "the module command is not available in this job"; exit 1; }
+module unload tecplot 2> /dev/null
+module load "$MODULE" || { echo "module load $MODULE failed"; exit 1; }
+module list 2>&1 | grep -i tecplot
+echo "Tecplot module: $MODULE on $(hostname), $(date)"
+# the cores this job may use: a first test on Rome showed "1 cores", i.e. Tecplot ran on one core
+# (about 25x slower than on the workstation). nproc honours OMP_NUM_THREADS, so show both, and let
+# Tecplot use every core of the node.
+echo "cores on the node: $(nproc --all); usable by this job: $(nproc); OMP_NUM_THREADS was '${OMP_NUM_THREADS:-unset}'"
+command -v taskset > /dev/null && echo "CPU affinity: $(taskset -cp $$ 2>&1 | sed 's/.*: //')"
+export OMP_NUM_THREADS=$(nproc --all)
+echo "OMP_NUM_THREADS set to $OMP_NUM_THREADS; usable cores now: $(nproc)"
+echo "tec360: $(command -v tec360)"
+
+# run one macro with a time limit; timeout ends Tecplot (exit status 124) if it runs too long
+run() {
+  local macro=$1 limit=$2
+  local start=$(date +%s)
+  local t0=$(awk '{print $14 + $15 + $16 + $17}' /proc/$$/stat)
+  timeout "$limit" tec360 -b -p "$macro"
+  local status=$?
+  # CPU time of Tecplot (children of this shell, in clock ticks) over the elapsed time: about 1
+  # means one core, about the core count means all of them
+  local t1=$(awk '{print $14 + $15 + $16 + $17}' /proc/$$/stat)
+  local el=$(( $(date +%s) - start ))
+  local cpu=$(awk -v a="$t0" -v b="$t1" -v hz="$(getconf CLK_TCK)" -v e="$el" 'BEGIN { if (e > 0) printf "%.1f", (b - a) / hz / e; else print "-" }')
+  echo "$macro: $el s, exit status $status$([ $status -eq 124 ] && echo " (stopped at the $limit limit)"), cores busy on average: $cpu"
+  return $status
+}
+
+# step 1 loads the 18 GB text neutral file and writes the fixed-neutral file used by the next test
+echo "node: $(nproc) cores, $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2)"
+if [ "$RUN_STEP1" = yes ] && [ -f test_step1.mcr ]; then
+  run test_step1.mcr 60m || { echo "step 1 failed: the interpolation tests need its output"; exit 1; }
+fi
+run test_batch.mcr 60m   # the neutral interpolation (workstation 2025 R2: about 2.5 minutes)
+if [ -f test_mhd.mcr ]; then
+  run test_mhd.mcr 60m   # the MHD interpolation (workstation 2025 R2: about 1.5 minutes)
+fi
+echo "done $(date)"

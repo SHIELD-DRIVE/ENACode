@@ -1,0 +1,101 @@
+# Time-dependent maps with the extended single-ion model (version 2.7): the
+# settings of run_esi.toml plus [time_dependent]. Every snapshot has its own
+# plasma, neutral, boundaries and streamline files; the method is described in
+# README.md ("Time-dependent maps") and include/ena/time_dependent.hpp.
+# Paths are relative to this file (enacpp/configs/).
+
+[run]
+output_dir = "cpp_output_esi_td"
+
+[model]
+source = "standard"
+populations = "extended_si"
+
+[grid]
+dtheta = 6.0
+dphi = 6.0
+dr = 2.0
+r_inner = 2.0
+nr = 736
+
+[integration]
+r_lower = 2.0
+r_upper = 800.0            # also the outermost cell whose losses are stored (memory, see memory_gb)
+radial_range = 0
+
+[physics]
+survival = true            # survival along the ENA's path through the snapshots (false: S = 1)
+extinction = true
+cold_electrons = true
+kappa = 1.0
+kappa_pui = 1.0
+kappa_ref = 1.0
+kappa_ism = 1.0
+kappa_oh = 1.0
+survival_observer_r = 100.0
+fitted_esw = true
+ts_detection = "regions"
+ts_reference = "computed"  # r_TS,V2 is measured in every snapshot
+v2_trajectory_file = "v2_trajectory_sim.txt"
+vshock = "first_below"
+
+# [region6] as in run_esi.toml (defaults: the region-3 treatment)
+
+[bands]
+run = [3, 4, 5, 6, 7]
+eres = 10
+
+[inputs]
+dir = "../../secondary_files/input/time_series"   # EXAMPLE: directory with the snapshot files
+format = "ascii"
+# HDF5 snapshots (recommended for many snapshots; made once with ena_convert): set
+#   format = "hdf5", dir = the ena_convert output directory, and in [time_dependent.files]
+#   file = "snapshot_{index:03}.h5" (the plasma/neutral/boundaries/streamlines names are then not used).
+
+[time_dependent]
+# Input range (years). Snapshot s covers [start + s dt, start + (s+1) dt): the first
+# snapshot covers start to start + dt, and so on; no interpolation in time.
+# (end - start)/dt snapshots must be given.
+start = 2005.0
+end = 2025.0
+dt_months = 2              # or dt = 0.1666667 (years)
+# Output windows: [output_start + w cadence, output_start + w cadence + window) up to
+# output_end, the flux arriving at the observer averaged over each window.
+# Default range: the whole input range. Must lie inside [start, end].
+output_start = 2009.0
+output_end = 2025.0
+cadence = 1.0              # years (or cadence_months); 1-year maps
+# window = 1.0             # window length (or window_months); default = cadence.
+                           # e.g. window = 1.0 with cadence_months = 6: 1-year running averages every 6 months
+observer_r_au = 1.0        # observer distance; ENAs travel radially at (2E/m_p)^1/2
+# Coverage: ENAs made before `start` are missing from the first windows. A line of sight is
+# flagged as a region with missing flux (coverage_complete = 0, with a WARNING) by either test:
+#  - extinction test: the streamline extinction e^-tau of the heliosheath cells whose ENAs are
+#    missing at the window start is still >= coverage_extinction (default 0.3, about the cooling
+#    length: 1/e of the ions remaining);
+coverage_extinction = 0.3
+#  - missing-flux test (default 0: off): the share of the window-averaged band flux made before
+#    `start`, estimated from the first snapshot (all components, including the heliosheath-created
+#    PUIs, which the extinction does not reduce), is >= this. The share is written either way.
+#    Note: with the extinction test alone, lines of sight can pass while still missing a large share of
+#    their flux (on the user's model, band 3: up to 55% shortly after the extinction limit is met);
+#    coverage_missing_flux = 0.3 flags those at a cost of about 1.5 years of extra spin-up in band 3.
+coverage_missing_flux = 0.0
+# Flagged lines of sight: false (default) sets their flux to 0 in every component map of that
+# band and window; true keeps their incomplete flux. They are flagged either way (coverage_complete
+# in the .h5 files, MissingFluxFlag .dat files in the legacy count-rate layout).
+include_incomplete_lines = false
+# Memory per MPI rank (GB) for the stored loss sums and per-cell production of the rank's lines
+# of sight. If all energies do not fit, the energies are processed in groups and the snapshots
+# are read once per group (same results). More ranks: less memory per rank.
+memory_gb = 8.0
+
+# Snapshot files: name patterns, {index} = first_index + s, {index:03} = zero-padded to 3 digits.
+# (Alternatively, list [[snapshot]] entries as in run_esi.toml; 'time', if given, must be
+# the start of the snapshot's time cell.)
+[time_dependent.files]
+first_index = 0
+plasma = "plasma_{index:03}.dat"
+neutral = "neutral_{index:03}.dat"
+boundaries = "boundaries_{index:03}.txt"
+streamlines = "streamlines_{index:03}.dat"

@@ -1,0 +1,30 @@
+# Test configuration for the 200,000-line slices of the real inputs.
+[run]
+output_dir = "out_slice"
+
+[model]
+source = "standard"
+
+[grid]
+dtheta = 6.0
+dphi = 6.0
+dr = 2.0
+r_inner = 2.0
+nr = 736
+
+[integration]
+r_lower = 2.0
+r_upper = 800.0
+radial_range = 2
+
+[inputs]
+dir = "../../inputs_head"   # where the slices were unpacked
+format = "ascii"
+allow_incomplete = true   # slices only cover the first theta rows
+
+[[snapshot]]
+time = 0.0
+plasma = "opherwithneutralsplasmafinish.dat"
+neutral = "opherwithneutralsnhfinish.dat"
+boundaries = "boundaries.txt"
+streamlines = "streamlines_kmhd_ChikaTD_2010_IB2AU_2AU.dat"

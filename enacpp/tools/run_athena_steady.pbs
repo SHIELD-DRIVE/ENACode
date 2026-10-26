@@ -1,0 +1,67 @@
+#!/bin/bash
+# Steady-state replication test on NASA HECC Athena (PBS): runs the same steady-state
+# configuration as on your workstation, so the maps can be compared with compare_runs.py.
+#
+# The whole node is requested and every core is used: a steady-state run is one process
+# with one OpenMP thread per core. It uses the build without MPI (enacpp/build_nompi), so
+# no MPI launcher or rank pinning is involved. The run is then repeated with fewer threads
+# (CHECK_THREADS) to confirm on Athena that the maps do not depend on the thread count.
+#
+# Lines marked CHECK depend on the site; confirm them against the HECC documentation for
+# Athena. Submit from the top directory of the ENA code (the one holding enacpp/):
+#     qsub enacpp/tools/run_athena_steady.pbs
+#
+#PBS -N ena_steady
+#PBS -q normal
+#PBS -l select=1:ncpus=256:mpiprocs=1:ompthreads=256:model=tur_ath
+#PBS -l walltime=01:00:00
+#PBS -j oe
+# Notes on the lines above (PBS allows no comment after a directive on its line):
+#   -q: your usual queue; a debug queue is fine if its time limit allows the run.
+#   select: one whole Athena Turin node (256 cores), one process with 256 threads.
+#   To charge a group, add a line "#PBS -W group_list=yourgroup".
+
+cd "$PBS_O_WORKDIR"
+# Live log: everything below goes to ena_steady_<job number>.log in the work directory as it
+# happens (the PBS output file only arrives when the job ends). Follow it with
+#     tail -f ena_steady_<job number>.log
+LOG=ena_steady_${PBS_JOBID%%.*}.log
+exec > "$LOG" 2>&1
+# Athena's default environment is PrgEnv-intel; the build used GCC through the Cray wrapper
+# (env CXX=CC cmake ...) with cray-hdf5. Do not run "module purge" on a Cray system: it
+# also removes the base environment the compiler wrapper and its libraries need.
+module swap PrgEnv-intel PrgEnv-gnu
+module load cray-hdf5
+
+CONFIG=enacpp/configs/run_esi.toml                # the configuration of your workstation reference run
+BANDS=3,6,9,13,14                                 # the bands of the reference run
+THREADS=256                                       # one thread per core of the node (not $(nproc): with
+                                                  #   hyperthreading it counts two per core)
+CHECK_THREADS=16                                  # second run, for the thread-count check (0: skip it)
+
+export OMP_PROC_BIND=spread                       # one thread per core, spread over the node
+export OMP_PLACES=cores
+
+echo "=== node $(hostname), $(date)"
+lscpu | grep -E "Model name|^CPU\(s\)|Thread\(s\) per core|NUMA node\(s\)"
+echo "cores given to the job: $THREADS"
+module list 2>&1
+
+echo "=== run 1: $THREADS threads -> athena_t$THREADS"
+start=$SECONDS
+stdbuf -oL enacpp/build_nompi/ena_run "$CONFIG" --bands "$BANDS" --threads "$THREADS" --out "athena_t$THREADS"
+echo "run 1: exit status $?, $((SECONDS - start)) s"
+
+if [ "$CHECK_THREADS" -gt 0 ]; then
+  echo "=== run 2: $CHECK_THREADS threads -> athena_t$CHECK_THREADS"
+  start=$SECONDS
+  stdbuf -oL enacpp/build_nompi/ena_run "$CONFIG" --bands "$BANDS" --threads "$CHECK_THREADS" --out "athena_t$CHECK_THREADS"
+  echo "run 2: exit status $?, $((SECONDS - start)) s"
+  # bit-for-bit comparison of the two runs' legacy count-rate files (no Python needed on Athena)
+  differing=0
+  for f in "athena_t$THREADS"/*.dat; do
+    cmp -s "$f" "athena_t$CHECK_THREADS/$(basename "$f")" || { echo "differs: $(basename "$f")"; differing=1; }
+  done
+  [ $differing -eq 0 ] && echo "thread check: all .dat files bit-identical between $THREADS and $CHECK_THREADS threads"
+fi
+echo "=== done $(date)"
