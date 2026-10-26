@@ -1,0 +1,22 @@
+# Files git should not track. Patterns apply in this folder and every folder below it.
+
+# Build folders, made by cmake when someone builds the code (cmake -S enacpp -B enacpp/build)
+build*/
+
+# Run outputs and working files
+cpp_output*/
+out/
+time_series*/
+prep_work/
+*.part
+*.tmp
+
+# Large data (MHD solutions, Tecplot files, HDF5 snapshots and outputs): share these
+# through a data archive such as Zenodo instead
+*.szplt
+*.plt
+*.h5
+
+# Python caches
+__pycache__/
+*.pyc
