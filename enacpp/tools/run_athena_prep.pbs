@@ -1,10 +1,11 @@
 #!/bin/bash
 # Prepare ENA input files from a series of MHD solutions on Athena, with Tecplot macros and the
-# C++ step 1 (tools/tecplot_prep.py and configs/prep_single_ion.toml).
+# C++ steps ena_fixneutrals and ena_trace (tools/tecplot_prep.py and configs/prep_single_ion.toml),
+# with Tecplot in its own batch mode (the driver's --batch option; no PyTecplot needed).
 #
-# Needs: PyTecplot (e.g. in a virtual environment, see PYENV below), ena_fixneutrals built on
-# Athena (set its path in the command = [...] line of the configuration), and a Tecplot version
-# that runs on the compute nodes. Status 2026-10-22: tecplot/2025r2 aborts at startup on the
+# Needs: ena_fixneutrals and ena_trace built on Athena (set their paths in the command = [...] lines
+# of the configuration), and a Tecplot version that runs on the compute nodes. Until then, use
+# tools/run_aitken_prep.pbs (Aitken Rome nodes). Status 2026-10-22: tecplot/2025r2 aborts at startup on the
 # compute nodes ("FATAL FIPS SELFTEST FAILURE"; reported to NAS); tecplot/2023r2 starts, but its
 # MHD interpolation did not finish within 20 minutes (2025 R2 on the workstation: 81 s).
 #
@@ -38,8 +39,6 @@ for init in /opt/cray/pe/modules/default/init/bash /usr/share/Modules/init/bash 
 done
 module unload tecplot 2> /dev/null
 module load tecplot/2025r2                        # CHECK: the Tecplot module
-PYENV=$HOME/pytecplot-env                         # CHECK: the virtual environment with PyTecplot
-[ -f "$PYENV/bin/activate" ] && source "$PYENV/bin/activate"
 
 CONFIG=enacpp/configs/prep_single_ion.toml
 FIRST=0                                           # snapshot indices to prepare (inclusive)
@@ -53,7 +52,9 @@ for w in $(seq 0 $((WORKERS - 1))); do
   a=$((FIRST + w * per)); b=$((a + per - 1)); [ $b -gt $LAST ] && b=$LAST
   [ $a -gt $LAST ] && break
   # each worker writes its own log too, so the lines of different workers do not interleave
-  tec360-env -- python3 -u enacpp/tools/tecplot_prep.py "$CONFIG" --first $a --last $b > "ena_prep_worker${w}.log" 2>&1 &
+  # its own work folder too: Tecplot's batch.log and the intermediate files must not be shared
+  python3 -u enacpp/tools/tecplot_prep.py "$CONFIG" --batch --work-dir "prep_work_w${w}" \
+    --first $a --last $b > "ena_prep_worker${w}.log" 2>&1 &
   echo "worker $w: snapshots $a-$b (log ena_prep_worker${w}.log)"
 done
 wait

@@ -1,7 +1,7 @@
 # Time-dependent maps with the extended single-ion model (version 2.7): the
 # settings of run_esi.toml plus [time_dependent]. Every snapshot has its own
 # plasma, neutral, boundaries and streamline files; the method is described in
-# README.md ("Time-dependent maps") and include/ena/time_dependent.hpp.
+# docs/REFERENCE.md ("Time-dependent maps") and include/ena/time_dependent.hpp.
 # Paths are relative to this file (enacpp/configs/).
 
 [run]

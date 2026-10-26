@@ -148,7 +148,7 @@ With 100 snapshots, use as many ranks per node as memory allows. `tools/run_athe
 
 ## Build
 
-Requirements: a C++17 compiler (GCC 9 or newer, with OpenMP, as standard), CMake 3.16 or newer, and the HDF5 C library with headers. HDF5 is optional, but without it there are no dumps, no `flux_bandNN.h5` output and no converter. MPI is optional: when CMake finds an MPI library (e.g. `module load` of the system MPI first), `ena_run` and `ena_convert` are built with it; `-DENA_WITH_MPI=OFF` builds without.
+Requirements: a C++17 compiler (GCC 9 or newer, with OpenMP, as standard; tested with GCC 9, 10 and 13, which give byte-identical results), CMake 3.16 or newer, and the HDF5 C library with headers. HDF5 is optional, but without it there are no dumps, no `flux_bandNN.h5` output and no converter. MPI is optional: when CMake finds an MPI library (e.g. `module load` of the system MPI first), `ena_run` and `ena_convert` are built with it; `-DENA_WITH_MPI=OFF` builds without.
 
 On Ubuntu:
 ```
@@ -243,7 +243,7 @@ Output names: `<input stem>_<component>[_ratio][_idl]_<nose|tail|ecliptic|custom
 
 ## Preparing input series with Tecplot (`tools/tecplot_prep.py`)
 
-For time-dependent runs, every MHD solution of a series has to become the four input files. `tools/tecplot_prep.py` runs the Tecplot macros of that workflow on each snapshot with PyTecplot (`pip install --user pytecplot`; run through `tec360-env`).
+For time-dependent runs, every MHD solution of a series has to become the four input files. `tools/tecplot_prep.py` runs the Tecplot macros of that workflow on each snapshot, either with PyTecplot (`pip install --user pytecplot`; run through `tec360-env`) or, with `--batch`, in Tecplot's own batch mode (`tec360 -b -p`; no PyTecplot). The driver needs Python 3.6 or newer and no other packages.
 
 - **Configuration:** `configs/prep_single_ion.toml`; the macros are in `configs/macros/single_ion/`. The steps of each snapshot:
   - 1: fix the neutral solution: the program `ena_fixneutrals` (see below), which writes the fixed neutrals as a binary `.plt`;
@@ -262,7 +262,10 @@ For time-dependent runs, every MHD solution of a series has to become the four i
 - **Without Tecplot:**
   - `--dry-run` shows what would run and checks the macros;
   - `--check-only` checks existing files.
-- **On Athena:** `tools/run_athena_prep.pbs`, optionally with several Tecplot workers side by side. A node is charged whole, and each worker uses a Tecplot license. Status 2026-10-22: Tecplot 2025 R2 aborts at startup on the compute nodes (FIPS self-test failure, reported to NAS), and Tecplot 2023 R2 did not finish the MHD interpolation within 20 minutes, so for now the inputs are prepared on a workstation. `tools/run_athena_tecplot_test.pbs` times the slow steps of a Tecplot version on a compute node.
+- **Batch mode (`--batch`, `--tecplot CMD`):** the macro steps between two program steps are written into one macro in the work folder (the `$!VARSET` lines, then per step the commands that load its input and the step's macro) and run with `tec360 -b -p` (or CMD) in the work folder: one Tecplot start per snapshot, between `ena_fixneutrals` and `ena_trace`. Tecplot's messages go to `batch.log` there; a run fails on an error exit status or an error line in `batch.log`, which the driver then shows. The files are the same as with PyTecplot.
+- **Folders (`--work-dir DIR`, `--stage-dir DIR`):** `--work-dir` overrides `[work] dir` (the intermediate files). With `--stage-dir` (or `[work] stage_dir`), each snapshot's inputs are copied to DIR first and Tecplot reads the copies; a fixed input (the grid) is copied once, the other copies are deleted after the snapshot. For a compute node's local disk: Tecplot reads `.szplt` files piece by piece, which is very slow from a network file system. Environment variables in both paths are expanded.
+- **On NASA HECC, Aitken Rome nodes:** `tools/run_aitken_prep.pbs` (submitted from a Pleiades front end): one Rome node, `--batch`, inputs and intermediate files on the node's disk (`$TMPDIR`), the finished files to the configured output folder, Tecplot and the C++ steps on cores 0-23 (`TECPLOT_CORES`), one snapshot after the other (one Tecplot license), live log `ena_prep_<job>.log`. Measured 2026-10-26: 523 s per snapshot (input copies 23 s, `ena_fixneutrals` 14 s, Tecplot 423 s, `ena_trace` 17 s, checks about 45 s). Timing tests (`tools/run_aitken_tecplot_test.pbs`): reading the inputs from `/nobackup`, the MHD interpolation took 2711 s; from the node's disk 201 s on the whole node and 112 s on 24 cores (Tecplot starts over 1000 threads on the whole node). Build `ena_fixneutrals` and `ena_trace` on a front end: `module load gcc`, then `cmake -S enacpp -B enacpp/build_pfe -DENA_WITH_MPI=OFF -DENA_WITH_HDF5=OFF` and `cmake --build enacpp/build_pfe -j 8 --target ena_fixneutrals ena_trace`.
+- **On Athena:** `tools/run_athena_prep.pbs` (batch mode), optionally with several Tecplot workers side by side, each with its own work folder. A node is charged whole, and each worker uses a Tecplot license. Status 2026-10-26: Tecplot 2025 R2 aborts at startup on the compute nodes (FIPS self-test failure; NAS: needs OpenSSL compatibility packages, not in the short term), and Tecplot 2023 R2 did not finish the MHD interpolation within 20 minutes; use the Aitken Rome nodes. `tools/run_athena_tecplot_test.pbs` times the slow steps of a Tecplot version on a compute node.
 - **Tecplot versions:** Tecplot 2025 R2 interpolates quickly from the neutrals only if they are a `.szplt` file (from a binary `.plt` or ASCII `.dat` it takes hours, as does 2023 R2 from `.plt`; 2020 R1 is fast with all three). Step 1 therefore saves the fixed neutrals as `.szplt`, and step 2a reads them so.
 - **Step 1 in C++:** `ena_fixneutrals` replaces Tecplot's step 1, which took about 25 minutes per snapshot, mostly to read the 18 GB neutral text file; it takes about 30 s. It reads the file in parallel through a memory map, evaluates the equations of `1_fix_neutrals.mcr` as Tecplot does (values in single precision, each equation in double precision in the written order), and writes the 33 variables Tecplot keeps. Validated 2026-10-22: the neutral input file came out byte-identical to the one of the all-Tecplot route.
 - **Reproducibility (tested 2026-10-22):** Tecplot's streamtraces are not reproducible. Two runs of the manual procedure on the same snapshot gave 922 of 1582 different streamlines and 85 vs 51 streamlines stuck at the south pole; even a second trace in the same Tecplot session, on the same field, changed the streamlines. The ENA maps of such runs differ by up to 5-19% in single directions (more than 1% in 6-40% of the sky, depending on the band). Tecplot's interpolation also differs between runs, in the 7th digit; how much that still changes traced streamlines where the flow diverges is measured by tracing the fields of two runs. Hence step 4: `ena_trace` gives the same streamlines for the same field every time, on any machine and for any number of threads (two full runs: identical streamlines, bit-identical maps). `tools/compare_inputs.py` compares input files from two runs (streamline files streamline by streamline, with the seeds that never leave their seed).
@@ -329,8 +332,9 @@ For time-dependent runs, every MHD solution of a series has to become the four i
 include/ena/   headers: config, grid, snapshot, ascii, streamlines, regions, physics,
                stream_processing, flux, checkpoints, h5io
 src/           implementations
-apps/          ena_run, ena_load, ena_convert
-tools/         ena_plot.py (sky maps), same_maps.py and compare_runs.py (comparing runs), run_athena*.pbs (Athena jobs)
+apps/          ena_run, ena_load, ena_convert, ena_fixneutrals, ena_trace
+tools/         ena_plot.py (sky maps), same_maps.py and compare_runs.py (comparing runs), tecplot_prep.py (input
+               preparation), comparison tools for inputs and streamlines, run_athena*.pbs and run_aitken*.pbs (NASA jobs)
 tests/         test_m2 (synthetic files in the real formats), test_physics (vs U_physics.h5)
 configs/       run_reference.toml (reference single-ion inputs), slice_test.toml (file slices)
 ```

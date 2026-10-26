@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Prepare ENA input files from a series of MHD solutions with Tecplot macros (PyTecplot).
+"""Prepare ENA input files from a series of MHD solutions with Tecplot macros.
 
     tec360-env -- python3 enacpp/tools/tecplot_prep.py enacpp/configs/prep_single_ion.toml
+    python3 enacpp/tools/tecplot_prep.py CONFIG --batch         # Tecplot's own batch mode, no PyTecplot
     python3 enacpp/tools/tecplot_prep.py CONFIG --dry-run       # what would run; checks the macros (no Tecplot)
     python3 enacpp/tools/tecplot_prep.py CONFIG --check-only    # check existing output files (no Tecplot)
-    options: --first N --last M (snapshot range), --redo (redo snapshots already done)
+    options: --first N --last M (snapshot range), --redo (redo snapshots already done),
+             --work-dir DIR (intermediate files), --stage-dir DIR (copy the inputs there first),
+             --batch [--tecplot CMD] (run the macros with "tec360 -b -p" instead of PyTecplot)
 
 The configuration (e.g. configs/prep_single_ion.toml) names:
   - the inputs of each snapshot ([input.NAME]): a numbered pattern ("mhd/run_{index:03}.szplt"),
@@ -23,10 +26,27 @@ the directory the driver is started in, so the macros contain no paths of their 
 any directory on any machine. |INDEX| (e.g. 007) is set too. Before running, every macro is
 scanned for absolute paths left in it; the run stops if one is found.
 
+Tecplot is run in one of two ways:
+  - with PyTecplot (the default): Tecplot runs inside this Python process, started through
+    tec360-env, and each step's macro is run on its own;
+  - with --batch: no PyTecplot is needed. The macro steps between two program steps are written
+    into one macro (the macro variables, then for each step the commands that load its input and
+    the step's macro), which is run by Tecplot's own batch mode, "tec360 -b -p MACRO", in the work
+    folder. For the single-ion configuration that is one Tecplot run per snapshot (steps 1b to 3,
+    between ena_fixneutrals and ena_trace). Tecplot writes its messages to batch.log in the work folder; a failed run shows
+    the end of it. The resulting files are the same: the same macros run in the same order.
+
 For each snapshot, the outputs are written under temporary names (<name>.part), checked
 (grid files: header removed, the rows of theta index above theta_index_max dropped where set, then
 one row per grid cell, the expected number of columns, no NaN/Inf; the streamline file: the
-expected number of variables and at least one zone), then renamed. A snapshot whose
+expected number of variables and at least one zone), then renamed.
+
+With --stage-dir DIR (or [work] stage_dir), each snapshot's input files are first copied to DIR,
+and Tecplot reads the copies. On a cluster, DIR should be the compute node's local disk: Tecplot
+reads .szplt files piece by piece as it needs them, which is very slow from a network file system
+(measured on NASA's Aitken Rome nodes: the MHD interpolation took 45 minutes reading from
+/nobackup, 2 to 4 minutes from the node's disk; copying the 13 GB file took 12 s). The copies of a
+snapshot are deleted when it is done; an input given as one fixed file (the grid) is copied once. A snapshot whose
 outputs all exist is skipped, so a stopped run can simply be started again. Each finished
 snapshot is recorded in prep_index.txt in the output folder, with the input files it came from.
 """
@@ -35,6 +55,7 @@ import ast
 import glob as globmod
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -211,6 +232,30 @@ def check_output(o, path, grid_rows):
 
 
 # ---------------------------------------------------------------------------------------------
+# macro text
+
+def load_commands(path):
+    """The commands the Tecplot window records for File > Load Data, into a new layout."""
+    path = os.path.abspath(path)
+    if path.endswith(".szplt"):
+        return ("$!NewLayout\n"
+                f"$!ReadDataSet  '\"STANDARDSYNTAX\" \"1.0\" \"FILENAME_FILE\" \"{path}\"'\n"
+                "  DataSetReader = 'Tecplot Subzone Data Loader'\n  ReadDataOption = New\n  ResetStyle = Yes\n")
+    return f"$!NewLayout\n$!ReadDataSet  '\"{path}\"'\n  ReadDataOption = New\n  ResetStyle = Yes\n"
+
+
+def macro_body(path):
+    """The commands of a step macro, without its '#!MC' first line."""
+    with open(path) as f:
+        return [ln for ln in f if not ln.startswith("#!MC")]
+
+
+def varset_lines(variables):
+    """$!VARSET lines that give every macro variable its file."""
+    return [f'$!VARSET |{k}| = "{v}"\n' for k, v in variables.items()]
+
+
+# ---------------------------------------------------------------------------------------------
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -226,6 +271,14 @@ def main():
     ap.add_argument("--load-by-macro", action="store_true",
                     help="load the inputs with $!ReadDataSet macro commands, as the Tecplot window does, "
                          "instead of the PyTecplot load functions")
+    ap.add_argument("--batch", action="store_true",
+                    help="run the macros with Tecplot's own batch mode (tec360 -b -p), without PyTecplot")
+    ap.add_argument("--tecplot", metavar="CMD", default="tec360",
+                    help="--batch: the Tecplot program (default tec360, as set up by the Tecplot module)")
+    ap.add_argument("--work-dir", metavar="DIR", help="folder of the intermediate files (overrides [work] dir)")
+    ap.add_argument("--stage-dir", metavar="DIR",
+                    help="copy each snapshot's input files to DIR first and let Tecplot read the copies "
+                         "(e.g. the compute node's local disk; overrides [work] stage_dir)")
     a = ap.parse_args()
 
     cfg = parse_config(a.config)
@@ -235,7 +288,10 @@ def main():
         sys.exit("the configuration needs [[step]] entries and [output_file.NAME] sections")
     grid_rows = int(grid["ntheta"]) * int(grid["nphi"]) * int(grid["nr"])
     outdir = cfg.get("output", {}).get("dir", "prep_out")
-    workdir = cfg.get("work", {}).get("dir", "prep_work")
+    # environment variables such as $TMPDIR are expanded in these two paths
+    workdir = os.path.expandvars(a.work_dir or cfg.get("work", {}).get("dir", "prep_work"))
+    stagedir = a.stage_dir or cfg.get("work", {}).get("stage_dir")
+    stagedir = os.path.expandvars(stagedir) if stagedir else None
     keep_work = cfg.get("work", {}).get("keep", False)
 
     resolvers = {n: input_resolver(n, s) for n, s in inputs.items()}
@@ -290,11 +346,17 @@ def main():
               + ", ".join(f"{n}: {c} files" for n, c in counts.items()))
 
     tp = None
+    if a.batch and a.connect:
+        sys.exit("--batch and --connect cannot be used together")
+    if a.batch and not (a.dry_run or a.check_only) and not shutil.which(a.tecplot):
+        sys.exit(f"--batch: the Tecplot program '{a.tecplot}' is not found (load the Tecplot module, or give --tecplot)")
     if not (a.dry_run or a.check_only):
-        try:
-            import tecplot as tp  # PyTecplot (pip install pytecplot); run through tec360-env
-        except ImportError:
-            sys.exit("PyTecplot is not available: pip install --user pytecplot, and run through tec360-env")
+        if not a.batch:
+            try:
+                import tecplot as tp  # PyTecplot (pip install pytecplot); run through tec360-env
+            except ImportError:
+                sys.exit("PyTecplot is not available: pip install --user pytecplot, and run through tec360-env,"
+                         " or use --batch (Tecplot's own batch mode, no PyTecplot)")
         if a.connect:
             # connected mode: the commands run in an open Tecplot window (with its own settings),
             # not in a separate batch-mode Tecplot inside this Python process
@@ -302,18 +364,17 @@ def main():
             print(f"connected to the Tecplot window on port {a.connect}", flush=True)
         os.makedirs(outdir, exist_ok=True)
         os.makedirs(workdir, exist_ok=True)
+        if stagedir:
+            os.makedirs(stagedir, exist_ok=True)
+            print(f"inputs are copied to {stagedir} first ({shutil.disk_usage(stagedir).free / 2**30:.0f} GB free there)",
+                  flush=True)
 
     def load(path):
         """Loads one input file into a new layout, as done by hand before running a macro."""
         if a.load_by_macro:
-            # the same commands the Tecplot window records for File > Load Data
-            reader = "  DataSetReader = 'Tecplot Subzone Data Loader'\n" if path.endswith(".szplt") else ""
-            name = (f'\'"STANDARDSYNTAX" "1.0" "FILENAME_FILE" "{os.path.abspath(path)}"\''
-                    if path.endswith(".szplt") else f'\'"{os.path.abspath(path)}"\'')
             loader = os.path.join(workdir, "load.mcr")
             with open(loader, "w") as g:
-                g.write("#!MC 1410\n$!NewLayout\n"
-                        f"$!ReadDataSet  {name}\n{reader}  ReadDataOption = New\n  ResetStyle = Yes\n")
+                g.write("#!MC 1410\n" + load_commands(path))
             tp.macro.execute_file(os.path.abspath(loader))
             os.remove(loader)
             return
@@ -322,6 +383,45 @@ def main():
             tp.data.load_tecplot_szl(path)
         else:
             tp.data.load_tecplot(path)
+
+    def run_batch(group, tag, variables, read, work):
+        """--batch: runs a sequence of macro steps in one Tecplot process ("tec360 -b -p MACRO"), as
+        one macro: the macro variables, then for each step the commands that load its input (as
+        done by hand before running that macro) and the step's macro."""
+        first_step = steps.index(group[0]) + 1
+        path = os.path.abspath(os.path.join(
+            workdir, f"tecplot_{tag}_steps{first_step}-{first_step + len(group) - 1}.mcr"))
+        with open(path, "w") as g:
+            g.write("#!MC 1410\n")
+            g.write(f"# written by tecplot_prep.py for snapshot {tag}: the macro variables, then the steps\n")
+            g.writelines(varset_lines(variables))
+            for st in group:
+                g.write(f"# ---- step '{st.get('name', st['macro'])}' ({st['macro']})\n")
+                if st.get("load"):
+                    g.write(load_commands(read[st["load"]] if st["load"] in read else work[st["load"]]))
+                g.writelines(macro_body(st["macro"]))
+        # Tecplot's batch mode writes its messages (and errors) to batch.log in the folder it runs in
+        log = os.path.join(workdir, "batch.log")
+        if os.path.exists(log):
+            os.remove(log)
+        names = ", ".join(st.get("name", st["macro"]) for st in group)
+        ts = time.time()
+        proc = subprocess.run([a.tecplot, "-b", "-p", path], cwd=workdir, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, universal_newlines=True)
+        logtext = open(log, errors="replace").read().splitlines() if os.path.exists(log) else []
+        errors = [ln for ln in logtext if re.search(r"\b(err|error|fatal)\b", ln, re.I)]
+        if proc.returncode != 0 or errors:
+            for ln in proc.stdout.splitlines()[-15:]:
+                print(f"[{tag}]     tecplot: {ln}")
+            for ln in (errors or logtext)[-15:]:
+                print(f"[{tag}]     batch.log: {ln}")
+            raise RuntimeError(f"Tecplot (batch) failed in the steps {names} (exit status {proc.returncode}); "
+                               f"the macro is {path}")
+        if not keep_work:
+            os.remove(path)
+            if os.path.exists(log):
+                os.remove(log)
+        print(f"[{tag}]   Tecplot (batch): {names}: {time.time() - ts:.0f} s", flush=True)
 
     done = failed = skipped = 0
     t_all = time.time()
@@ -352,6 +452,8 @@ def main():
             print(f"[{tag}]")
             for n, p in src.items():
                 print(f"   input {n}: {p}" + ("" if os.path.exists(p) else "   (FILE NOT FOUND)"))
+            if stagedir:
+                print(f"   (the inputs are copied to {stagedir} first, and Tecplot reads the copies)")
             for k, v in variables.items():
                 print(f"   |{k}| = {v}")
             for st in steps:
@@ -359,6 +461,8 @@ def main():
                     print("   run " + " ".join(arg.format(**variables) for arg in st["command"]))
                 else:
                     print(f"   run {st['macro']}" + (f"  (after loading '{st['load']}' into a new layout)" if st.get("load") else ""))
+            if a.batch:
+                print(f"   (--batch: the macros between two programs run as one macro, with {a.tecplot} -b -p)")
             continue
         lost = [p for p in src.values() if not os.path.exists(p)]
         if lost:
@@ -367,35 +471,58 @@ def main():
             continue
         t0 = time.time()
         current = None
+        read = dict(src)  # the files Tecplot reads: the inputs, or their copies in the stage folder
+        staged = []       # copies of this snapshot's inputs, deleted when it is done
         try:
-            for st in steps:
+            if stagedir:
+                for n, p in src.items():
+                    dst = os.path.join(stagedir, f"{n}_{os.path.basename(p)}")
+                    if "file" not in inputs[n]:  # a fixed input (the grid) is kept for the next snapshots
+                        staged.append(dst)
+                    if not os.path.exists(dst):
+                        ts = time.time()
+                        shutil.copyfile(p, dst + ".copying")  # a stopped copy never looks complete
+                        os.replace(dst + ".copying", dst)
+                        print(f"[{tag}]   copied {n} ({os.path.getsize(dst) / 2**30:.1f} GB) to the stage folder: "
+                              f"{time.time() - ts:.0f} s", flush=True)
+                    read[n] = dst
+                    variables[inputs[n]["macro_variable"]] = os.path.abspath(dst)
+
+            group = []  # --batch: the macro steps since the last program step, run in one Tecplot
+            for st in steps + [None]:
+                if group and (st is None or "command" in st):
+                    current = None
+                    run_batch(group, tag, variables, read, work)
+                    group = []
+                if st is None:
+                    break
                 current = st  # for the failure report
                 ts = time.time()
                 if "command" in st:
                     # a program step, e.g. ena_fixneutrals: its output goes to the log as it comes
                     args = [arg.format(**variables) for arg in st["command"]]
-                    proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
                     for ln in proc.stdout.splitlines():
                         print(f"[{tag}]     {ln}", flush=True)
                     if proc.returncode != 0:
                         raise RuntimeError(f"{os.path.basename(args[0])} failed (exit status {proc.returncode})")
                     print(f"[{tag}]   {st.get('name', args[0])}: {time.time() - ts:.0f} s", flush=True)
                     continue
+                if a.batch:
+                    group.append(st)
+                    continue
                 if st.get("load"):
-                    load(src[st["load"]] if st["load"] in src else work[st["load"]])
+                    load(read[st["load"]] if st["load"] in read else work[st["load"]])
                     print(f"[{tag}]   loaded {st['load']}: {time.time() - ts:.0f} s", flush=True)
                 # PyTecplot accepts $!VARSET only inside a macro file, not through execute_command.
                 # So each step runs a small wrapper macro in the work folder: the $!VARSET lines,
                 # then the step's macro as it is (without its own "#!MC" first line).
                 wrapper = os.path.join(workdir, f"step{steps.index(st) + 1}_{tag}.mcr")
-                with open(st["macro"]) as f:
-                    body = [ln for ln in f if not ln.startswith("#!MC")]
                 with open(wrapper, "w") as g:
                     g.write("#!MC 1410\n")
                     g.write(f"# written by tecplot_prep.py: the macro variables, then {st['macro']}\n")
-                    for k, v in variables.items():
-                        g.write(f'$!VARSET |{k}| = "{v}"\n')
-                    g.writelines(body)
+                    g.writelines(varset_lines(variables))
+                    g.writelines(macro_body(st["macro"]))
                 tp.macro.execute_file(os.path.abspath(wrapper))
                 if not keep_work:
                     os.remove(wrapper)
@@ -439,6 +566,11 @@ def main():
                 print(f"[{tag}]   To see the failing line: load the same input in the Tecplot window and play "
                       f"the macro {os.path.join(os.path.abspath(workdir), 'step' + str(steps.index(current) + 1) + '_' + tag + '.mcr')}",
                       flush=True)
+        finally:
+            for p in staged:  # this snapshot's input copies (a stopped copy is the .copying file)
+                for q in (p, p + ".copying"):
+                    if os.path.exists(q):
+                        os.remove(q)
     if a.dry_run:
         return 0
     if a.check_only:

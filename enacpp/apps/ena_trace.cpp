@@ -37,8 +37,9 @@
 //  - Every variable is interpolated to the points, as Tecplot does, except the position and
 //    theta0, phi0, r0, which are computed from the position with the step-3 macro's formulas.
 
+#include "ena/ascii.hpp"
+
 #include <algorithm>
-#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -204,10 +205,10 @@ Field read_field(const std::string& path) {
   for (size_t n = 0; n < raw.size(); ++n) {
     while (p < e && is_blank(*p)) ++p;
     if (p < e && *p == '+') ++p;
-    auto r = std::from_chars(p, e, raw[n]);
-    if (r.ec != std::errc())
+    const char* next = ena::read_double(p, e, raw[n]);  // from_chars where the compiler has it for doubles
+    if (!next)
       throw std::runtime_error(path + ": expected " + std::to_string(raw.size()) + " numbers, could read " + std::to_string(n));
-    p = r.ptr;
+    p = next;
   }
   auto node = [&](long i, long j, long k) { return &raw[((size_t(k) * nj + j) * ni + i) * fd.nv]; };
 

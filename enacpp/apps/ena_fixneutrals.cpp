@@ -19,8 +19,10 @@
 // Tecplot then loads the .plt and saves it as .szplt (macro 1b_save_szplt.mcr): Tecplot 2025 R2
 // interpolates quickly only from a .szplt neutral file.
 
+#include "ena/ascii.hpp"
+
 #include <algorithm>
-#include <charconv>
+#include <charconv>  // from_chars for the integers
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -238,8 +240,8 @@ LineRanges split_lines(const MappedFile& f, size_t start, int parts) {
 const char* parse_double(const char* p, const char* end, double& v) {
   while (p < end && is_blank(*p)) ++p;
   if (p < end && *p == '+') ++p;  // from_chars does not accept a leading '+'
-  auto r = std::from_chars(p, end, v);
-  if (r.ec != std::errc()) {
+  const char* next = ena::read_double(p, end, v);  // from_chars where the compiler has it for doubles
+  if (!next) {
     // Fortran-style exponents (1.0D+05) or other forms: fall back to strtod on a copy
     char buf[64];
     size_t n = 0;
@@ -253,7 +255,7 @@ const char* parse_double(const char* p, const char* end, double& v) {
     if (stop == buf) throw std::runtime_error("cannot read a number: " + std::string(buf));
     return p + (stop - buf);
   }
-  return r.ptr;
+  return next;
 }
 
 const char* parse_int(const char* p, const char* end, long long& v) {

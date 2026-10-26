@@ -17,8 +17,18 @@
 
 # CHECK: the Tecplot module to test (module avail tecplot)
 MODULE=tecplot/2023r2
+# CHECK: copy the input files of each test to the node's local disk first ("yes") or not ("no");
+# see run_aitken_tecplot_test.pbs
+STAGE_LOCAL=yes
+TECPLOT_CORES=all
+LOCAL_DIR="${TMPDIR:-/tmp}/tecplot_test_${PBS_JOBID%%.*}"
 
 cd "$PBS_O_WORKDIR"
+# PBS hands back the job's output only at the end; also write it, as it happens, to a log in this
+# folder, which can be read from the front end while the job runs (e.g. tail -f tecplot_test_<id>.log)
+LOG="tecplot_test_${PBS_JOBID%%.*}.log"
+exec > >(tee -a "$LOG") 2>&1
+echo "log: $PBS_O_WORKDIR/$LOG"
 # a bash job script on Athena does not have the "module" command (the csh login sets it up only for
 # csh), so set it up here; then replace whatever Tecplot module the login loaded with $MODULE
 for init in /opt/cray/pe/modules/default/init/bash /usr/share/Modules/init/bash \
@@ -40,12 +50,49 @@ echo "OMP_NUM_THREADS set to $OMP_NUM_THREADS; usable cores now: $(nproc)"
 echo "tec360: $(command -v tec360)"
 
 # run one macro with a time limit; timeout ends Tecplot (exit status 124) if it runs too long
+# stage MACRO: copy the existing files the macro names ("/....szplt", .plt, .dat) to LOCAL_DIR once,
+# and print the name of a copy of the macro that uses the local copies
+stage() {
+  local macro=$1 out="local_${PBS_JOBID%%.*}_$1" f base   # job number in the name: jobs may share the folder
+  cp "$macro" "$out"
+  for f in $(grep -o '"/[^"]*\.\(szplt\|plt\|dat\)"' "$macro" | tr -d '"' | sort -u); do
+    [ -f "$f" ] || continue
+    base="$LOCAL_DIR/$(basename "$f")"
+    if [ ! -f "$base" ]; then
+      local t=$(date +%s)
+      cp "$f" "$base" || { echo "copy of $f failed (local disk full?)" >&2; cp "$macro" "$out"; echo "$out"; return; }
+      echo "  copied $(du -h "$f" | cut -f1) $f to the local disk in $(( $(date +%s) - t )) s" >&2
+    fi
+    sed -i "s|\"$f\"|\"$base\"|g" "$out"
+  done
+  echo "$out"
+}
+
 run() {
   local macro=$1 limit=$2
+  if [ "$STAGE_LOCAL" = yes ]; then macro=$(stage "$macro"); fi
   local start=$(date +%s)
   local t0=$(awk '{print $14 + $15 + $16 + $17}' /proc/$$/stat)
-  timeout "$limit" tec360 -b -p "$macro"
+  # every minute, note the CPU use of all this job's processes on the node (%: about 100 per busy
+  # core, averaged over each process's lifetime) and the largest thread count among them
+  ( n=0; while sleep 60; do
+      n=$((n + 1))
+      ps -u "$(id -un)" -o pcpu=,nlwp=,comm= |
+        awk -v m="$macro" -v t="$n" '{ cpu += $1; if ($2 > th) { th = $2; name = $3 } }
+          END { printf "  %s, minute %d: %.0f%% CPU in total (about %.0f cores), most threads: %s (%d)\n", m, t, cpu, cpu / 100, name, th }'
+    done ) &
+  local sampler=$!
+  if [ "$TECPLOT_CORES" = all ]; then
+    timeout "$limit" tec360 -b -p "$macro"
+  else
+    timeout "$limit" taskset -c "0-$((TECPLOT_CORES - 1))" tec360 -b -p "$macro"
+  fi
   local status=$?
+  { kill "$sampler" && wait "$sampler"; } 2> /dev/null
+  # Tecplot's batch mode writes its errors to batch.log in the working folder, not to the output
+  if [ -s batch.log ] && [ batch.log -nt "$macro" ]; then
+    echo "  batch.log after $macro:"; sed 's/^/    /' batch.log | tail -20
+  fi
   # CPU time of Tecplot (children of this shell, in clock ticks) over the elapsed time: about 1
   # means one core, about the core count means all of them
   local t1=$(awk '{print $14 + $15 + $16 + $17}' /proc/$$/stat)
@@ -55,6 +102,11 @@ run() {
   return $status
 }
 
+if [ "$STAGE_LOCAL" = yes ]; then
+  mkdir -p "$LOCAL_DIR" || { echo "cannot make $LOCAL_DIR"; exit 1; }
+  trap 'rm -rf "$LOCAL_DIR" local_${PBS_JOBID%%.*}_*.mcr' EXIT
+  echo "local copies in $LOCAL_DIR: $(df -h "$LOCAL_DIR" | awk 'NR == 2 { print $4 " free on " $1 }')"
+fi
 # step 1 loads the 18 GB text neutral file and writes the fixed-neutral file used by the next test
 if [ -f test_step1.mcr ]; then
   run test_step1.mcr 60m || { echo "step 1 failed: the interpolation tests need its output"; exit 1; }

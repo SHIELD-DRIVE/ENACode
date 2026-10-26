@@ -9,6 +9,13 @@
 
 namespace ena {
 
+// Reads one number starting exactly at p (no blanks skipped, no leading '+'), as
+// std::from_chars does: returns the position after it, or nullptr if p holds no number.
+// Uses std::from_chars where the C++ library supports it for floating point (GCC 11 or
+// newer), otherwise std::strtod on a copy of the token (GCC 9 and 10). Both round
+// correctly, so the values are identical either way.
+const char* read_double(const char* p, const char* end, double& v);
+
 // Parses up to `max` numbers from a line into `out`. Returns the count parsed,
 // or -1 if a token is not a number.
 int parse_numbers(std::string_view line, double* out, int max);

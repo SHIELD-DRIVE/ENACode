@@ -1,0 +1,98 @@
+#!/bin/bash
+# Prepare ENA input files from a series of MHD solutions on an Aitken Rome node (NASA HECC), with
+# Tecplot 360 and the C++ steps ena_fixneutrals and ena_trace (tools/tecplot_prep.py and
+# configs/prep_single_ion.toml). Tecplot runs in its own batch mode (tec360 -b -p, the driver's
+# --batch option), as in the timing tests, so PyTecplot is not needed.
+#
+# How it runs, and why (from timing tests on Rome nodes, 2026-10-26):
+#  - One Tecplot process at a time, i.e. one Tecplot license, so licenses stay free for other users.
+#    Tecplot is started once per snapshot, for the macro steps between ena_fixneutrals and ena_trace.
+#  - Tecplot is limited to cores 0 to TECPLOT_CORES-1 (24 by default). On the whole node (128 cores,
+#    256 threads) Tecplot starts over 1,000 threads and runs about 2x slower than on 24 cores
+#    (neutral interpolation 421 s vs 216 s, MHD interpolation 201 s vs 112 s).
+#  - Each snapshot's input files are copied to the node's local disk ($TMPDIR, about 250 GB free)
+#    and Tecplot reads the copies. Tecplot reads .szplt files piece by piece as it needs them, which
+#    is very slow from /nobackup (the MHD interpolation took 45 minutes there; copying the 13 GB
+#    file takes about 12 s). The intermediate files are written to the local disk too. The finished
+#    output files go to the output folder of the configuration (e.g. on /nobackup).
+#  - Expect about 7 to 8 minutes per snapshot.
+#  A snapshot whose output files all exist is skipped, so the job can simply be submitted again
+#  after a stop (e.g. at the walltime limit); the local disk is cleared at the end of every job.
+#
+# Before the first run (on a Pleiades front end, pfe):
+#  1. Build ena_fixneutrals and ena_trace (they need neither MPI nor HDF5):
+#       module load gcc
+#       cmake -S enacpp -B enacpp/build_pfe -DENA_WITH_MPI=OFF -DENA_WITH_HDF5=OFF
+#       cmake --build enacpp/build_pfe -j 8 --target ena_fixneutrals ena_trace
+#     and set their paths in the command = [...] lines of the configuration
+#     (enacpp/build_pfe/ena_fixneutrals and enacpp/build_pfe/ena_trace).
+#  2. Check the configuration without Tecplot:
+#       python3 enacpp/tools/tecplot_prep.py enacpp/configs/prep_single_ion.toml --dry-run
+#
+# Submit from the top directory (the one holding enacpp/), on a Pleiades front end:
+#   qsub enacpp/tools/run_aitken_prep.pbs
+# Follow it with: tail -f ena_prep_<job number>.log
+# For a Milan node, change rom_ait to mil_ait in the select line (not tested yet).
+#
+#PBS -N ena_prep
+#PBS -q normal
+#PBS -l select=1:ncpus=128:ompthreads=128:model=rom_ait
+#PBS -l walltime=08:00:00
+#PBS -j oe
+#PBS -W group_list=s8440
+# Notes on the lines above (PBS allows no comment after a directive on its line):
+#   walltime: about 8 minutes x (number of snapshots) plus a margin, e.g. 8 hours for 50 snapshots;
+#   check the queue's limit (qstat -Q -f normal); the long queue allows longer jobs.
+#   ompthreads=128: without it, PBS sets OMP_NUM_THREADS=1 and the job sees one core.
+#   group_list: the group the job is charged to.
+
+# ---- settings
+CONFIG=enacpp/configs/prep_single_ion.toml        # CHECK: the preparation configuration
+FIRST=0                                           # CHECK: snapshot indices to prepare (inclusive)
+LAST=23
+MODULE=tecplot/2025r2                             # CHECK: the Tecplot module (2025 R2 works on Rome)
+PYMODULE=python3/3.11.5                           # CHECK: a Python 3 module for the driver (empty: the system python3)
+TECPLOT_CORES=24                                  # cores for Tecplot (and the C++ steps): 0 to N-1
+
+cd "$PBS_O_WORKDIR"
+# PBS hands back the job's output only at the end; also write it, as it happens, to a log in this
+# folder, which can be read from the front end while the job runs
+LOG="ena_prep_${PBS_JOBID%%.*}.log"
+exec > >(tee -a "$LOG") 2>&1
+echo "=== log: $PBS_O_WORKDIR/$LOG"
+
+# a bash job script may not have the "module" command (the csh login sets it up only for csh)
+for init in /opt/cray/pe/modules/default/init/bash /usr/share/Modules/init/bash \
+            /usr/share/modules/init/bash /etc/profile.d/modules.sh; do
+  if [ -f "$init" ]; then source "$init"; break; fi
+done
+type module > /dev/null 2>&1 || { echo "the module command is not available in this job"; exit 1; }
+module unload tecplot 2> /dev/null
+module load "$MODULE" || { echo "module load $MODULE failed"; exit 1; }
+if [ -n "$PYMODULE" ]; then module load "$PYMODULE" || { echo "module load $PYMODULE failed"; exit 1; }; fi
+command -v tec360 > /dev/null || { echo "tec360 not found after module load $MODULE"; exit 1; }
+
+# OpenMP programs (ena_fixneutrals, ena_trace) and Tecplot use this many threads
+export OMP_NUM_THREADS=$TECPLOT_CORES
+
+# the node's local disk: a folder for this job, removed when the job ends (also after an error)
+LOCAL="${TMPDIR:-/tmp}/ena_prep_${PBS_JOBID%%.*}"
+mkdir -p "$LOCAL/work" "$LOCAL/inputs" || { echo "cannot make $LOCAL"; exit 1; }
+trap 'rm -rf "$LOCAL"' EXIT
+
+echo "=== $(hostname), $(date)"
+echo "    $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | sed 's/^ *//'), $(nproc --all) logical CPUs; using cores 0-$((TECPLOT_CORES - 1))"
+echo "    Tecplot: $MODULE ($(command -v tec360)); python3: $(command -v python3) ($(python3 --version 2>&1))"
+echo "    local disk: $LOCAL, $(df -h "$LOCAL" | awk 'NR == 2 { print $4 " free" }')"
+echo "    configuration $CONFIG, snapshots $FIRST-$LAST"
+
+# one Tecplot process at a time (one license); taskset keeps the driver and everything it starts
+# (Tecplot, ena_fixneutrals, ena_trace) on the chosen cores
+taskset -c "0-$((TECPLOT_CORES - 1))" python3 -u enacpp/tools/tecplot_prep.py "$CONFIG" --batch \
+  --first "$FIRST" --last "$LAST" --work-dir "$LOCAL/work" --stage-dir "$LOCAL/inputs"
+status=$?
+echo "=== preparation finished $(date), exit status $status"
+
+echo "=== final check of all files"
+python3 enacpp/tools/tecplot_prep.py "$CONFIG" --first "$FIRST" --last "$LAST" --check-only | tail -n 3
+exit $status

@@ -2,10 +2,40 @@
 
 #include <charconv>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <stdexcept>
 
 namespace ena {
+
+// __cpp_lib_to_chars is defined (in <charconv>) only where from_chars also reads floating
+// point; ENA_NO_FLOAT_FROM_CHARS forces the strtod route, to test it with a newer compiler.
+#if defined(__cpp_lib_to_chars) && !defined(ENA_NO_FLOAT_FROM_CHARS)
+const char* read_double(const char* p, const char* end, double& v) {
+  auto r = std::from_chars(p, end, v);
+  return r.ec == std::errc() ? r.ptr : nullptr;
+}
+#else
+const char* read_double(const char* p, const char* end, double& v) {
+  // strtod needs a terminated string: copy the token (up to a blank, comma or line end).
+  // A number has at most a few dozen characters; a longer token is not one of ours.
+  char buf[128];
+  std::size_t n = 0;
+  while (p + n < end && n < sizeof(buf) - 1) {
+    const char c = p[n];
+    // from_chars reads no hexadecimal numbers ("0x10" gives 0, stopping at the x): end the copy there
+    if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ',' || c == 'x' || c == 'X') break;
+    buf[n++] = c;
+  }
+  // from_chars accepts no leading blank or sign '+': neither do we
+  if (n == 0 || buf[0] == '+') return nullptr;
+  buf[n] = 0;
+  char* stop = nullptr;
+  v = std::strtod(buf, &stop);
+  if (stop == buf) return nullptr;
+  return p + (stop - buf);
+}
+#endif
 
 int parse_numbers(std::string_view line, double* out, int max) {
   const char* p = line.data();
@@ -17,8 +47,8 @@ int parse_numbers(std::string_view line, double* out, int max) {
     if (n >= max) return max + 1;  // too many fields
     if (*p == '+') ++p;
     double v;
-    auto res = std::from_chars(p, end, v);
-    if (res.ec != std::errc()) {
+    const char* next = read_double(p, end, v);
+    if (!next) {
       // Accept Fortran-style 'D' exponents and NaN/Inf spellings.
       const char* q = p;
       std::string tok;
@@ -28,7 +58,7 @@ int parse_numbers(std::string_view line, double* out, int max) {
       if (tok.empty() || *e2 != '\0') return -1;
       p = q;
     } else {
-      p = res.ptr;
+      p = next;
       if (p < end && *p != ' ' && *p != '\t' && *p != '\r' && *p != ',') return -1;
     }
     out[n++] = v;

@@ -50,7 +50,7 @@ The maps are plotted with a Python script that places them in ecliptic J2000 coo
 | HDF5 library | e.g. `sudo apt install libhdf5-dev` | module `cray-hdf5` |
 | MPI (optional) | e.g. Open MPI, only for time-dependent runs on several processes | `cray-mpich` |
 | Python 3 with numpy, h5py, matplotlib | for the maps and comparison tools | (optional) |
-| Tecplot 360 with PyTecplot (optional) | only to make the input files from MHD solutions (section 8) | |
+| Tecplot 360 (optional) | only to make the input files from MHD solutions (section 8); with PyTecplot, or in Tecplot's own batch mode | runs on the Aitken Rome nodes of Pleiades, not on Athena (section 8) |
 
 ## Input files
 
@@ -292,7 +292,7 @@ Maps are arrays of 30 × 60 values: θ = 0, 6, …, 174° (north pole first) by 
 
 # 8. Preparing input series from MHD solutions
 
-For time-dependent maps, every MHD solution of a series (with its neutral solution) has to become the four input files. `enacpp/tools/tecplot_prep.py` does this for the single-ion model, snapshot after snapshot. It needs Tecplot 360 with PyTecplot (tested with Tecplot 2025 R2 and 2020 R1).
+For time-dependent maps, every MHD solution of a series (with its neutral solution) has to become the four input files. `enacpp/tools/tecplot_prep.py` does this for the single-ion model, snapshot after snapshot. It needs Tecplot 360 (tested with Tecplot 2025 R2 and 2020 R1), run either through PyTecplot or in Tecplot's own batch mode (`--batch`, no PyTecplot needed).
 
 **The steps of each snapshot:**
 
@@ -320,6 +320,25 @@ About 5–6 minutes per snapshot on a 24-core workstation, most of it Tecplot's 
    /usr/local/tecplot/360ex_2025r2/bin/tec360-env -- python3 -u enacpp/tools/tecplot_prep.py enacpp/configs/my_prep.toml > prep.log 2>&1 &
    ```
    Finished snapshots are skipped, so a stopped run can be started again. The outputs are named `plasma_000.dat`, `neutral_000.dat`, `boundaries_000.txt`, `streamlines_000.dat`, …, ready for section 6.
+
+   Without PyTecplot, use Tecplot's own batch mode instead (with `tec360` on your path):
+   ```
+   python3 -u enacpp/tools/tecplot_prep.py enacpp/configs/my_prep.toml --batch > prep.log 2>&1 &
+   ```
+
+**On NASA HECC.** Tecplot does not run on Athena's compute nodes, but it runs on the Aitken Rome nodes of Pleiades. `enacpp/tools/run_aitken_prep.pbs` prepares a series there, one snapshot after the other, with one Tecplot license. It copies each snapshot's inputs to the node's own disk first, because Tecplot reads its files very slowly from `/nobackup`, and keeps Tecplot on 24 cores, where it runs about twice as fast as on the whole node. It takes about 9 minutes per snapshot. On a Pleiades front end (`pfe`), from the folder holding `enacpp/`:
+1. Build the two C++ programs (each line separately):
+   ```
+   module load gcc
+   cmake -S enacpp -B enacpp/build_pfe -DENA_WITH_MPI=OFF -DENA_WITH_HDF5=OFF
+   cmake --build enacpp/build_pfe -j 8 --target ena_fixneutrals ena_trace
+   ```
+2. In your copy of `prep_single_ion.toml`, change `enacpp/build/` to `enacpp/build_pfe/` in the two `command = [...]` lines, set your input and output folders, and check it with `--dry-run` as above.
+3. In `run_aitken_prep.pbs`, set `CONFIG`, `FIRST`, `LAST` and the walltime (about 9 minutes per snapshot plus a margin), then submit it and follow its log:
+   ```
+   qsub enacpp/tools/run_aitken_prep.pbs
+   tail -f ena_prep_<job number>.log
+   ```
 
 **Note on the maps.** The shock speed of the accelerated pickup ions is read where each streamline first becomes subsonic, inside the MHD shock. So the maps depend a little (typically 1–10% in single directions) on exactly where the streamline points fall. Keep the tracer settings at their defaults within a series, so that changes between snapshots come from the solution.
 
@@ -375,6 +394,9 @@ python3 enacpp/tools/ena_plot.py OUT/flux_band*.h5 --config enacpp/configs/plot_
 | "cannot open" an input file | `inputs.dir` is relative to the settings file, not to where you run from. |
 | A run on many cores is no faster than on a few | The threads are all on one core: in a job script, set `OMP_PROC_BIND=spread` and `OMP_PLACES=cores` (as `run_athena_steady.pbs` does), and do not start a steady-state run with `mpiexec`. |
 | The run stops: "region 3/6 cells left empty" | Part of the heliosheath has no streamline data. The log lists the cells. `[physics] unfilled_cells = "skip"` leaves them out of the maps and lets the run continue. |
+| Building stops with "no matching function for call to 'from_chars'" | An older version of the code with GCC 9 or 10 (e.g. on a Pleiades front end): use the current version, which builds with GCC 9 and newer. |
+| "PyTecplot is not available" | Run the preparation with `--batch` (Tecplot's own batch mode), or install PyTecplot. |
+| The input preparation is very slow on a NASA node | Use `run_aitken_prep.pbs`: it copies the inputs to the node's disk and keeps Tecplot on 24 cores. |
 | "error: externally-managed-environment" from `pip` | Install the Python packages in a virtual environment: `python3 -m venv ~/ena-env`, then `~/ena-env/bin/python3 -m pip install numpy h5py matplotlib`. |
 | WARNING about regions with missing flux | Time-dependent run: the first windows are too close to the first snapshot for that energy (section 6). |
 | WARNING about region-5 cells or heliosheath pockets | The region codes in `boundaries.txt` have undetermined cells or a wavy termination shock; the log and `heliosheath_pockets.txt` give their locations. |

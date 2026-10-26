@@ -75,7 +75,7 @@ eres = 10
 dir = "../../secondary_files/input"
 format = "ascii"
 # Column layouts default to the extended SI files (12 plasma columns, 41 neutral
-# columns, 19 streamline variables); see README.md to override them.
+# columns, 19 streamline variables); see docs/REFERENCE.md to override them.
 
 [[snapshot]]
 time = 0.0
