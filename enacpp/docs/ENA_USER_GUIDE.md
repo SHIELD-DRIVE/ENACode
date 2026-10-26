@@ -58,8 +58,8 @@ One MHD **snapshot** is four text files:
 
 | File | Contents | Example name |
 |---|---|---|
-| Plasma | density, temperature and velocity of the ion fluid(s) in every grid cell | `opherwithneutralsplasmafinish.dat` |
-| Neutral | interstellar hydrogen (total, plus four populations for the extended single-ion and multi-ion models) | `opherwithneutralsnhfinish.dat` |
+| Plasma | density, temperature and velocity of the ion fluid(s) in every grid cell | `plasma.dat` |
+| Neutral | interstellar hydrogen (total, plus four populations for the extended single-ion and multi-ion models) | `neutrals.dat` |
 | Boundaries | the region code of every cell (supersonic wind, heliosheath, beyond the heliopause) and the magnetic field | `boundaries.txt` |
 | Streamlines | the flow streamlines, in Tecplot format | `streamlines.dat` |
 
@@ -68,22 +68,31 @@ One MHD **snapshot** is four text files:
 - **Voyager 2 trajectory:** `enacpp/configs/v2_trajectory_sim.txt` is used to find the termination-shock distance along Voyager 2. It comes with the code.
 - **Time-dependent runs** need one snapshot (four files) per time step, named with a running number, e.g. `plasma_000.dat`, `plasma_001.dat`, …
 - **Making the files:** from MHD solutions, with Tecplot and the tools of section 8.
+- **Sample snapshot:** the four files of a single-ion MHD solution (Kornbleuth et al. 2023; about 1 GB) are on Zenodo, [doi:10.5281/zenodo.23675226](https://doi.org/10.5281/zenodo.23675226). Section 5 shows how to download and run them.
 
 ## Directory layout
 
 Keep this layout; the example settings files find the inputs through it:
 ```
-ENACode/                         the top directory (you run the commands from here)
-  enacpp/                        the C++ code (this repository)
+ENACode/                         the repository; the top directory (you run the commands from here)
+  enacpp/                        the C++ code
     configs/                     settings files
     tools/                       plotting, comparison, input-preparation and job scripts
     docs/                        this guide and the full reference
-  secondary_files/input/         the input files
+  secondary_files/input/         the input files (placeholders until you add the sample or your own)
+  secondary_files/output/        the results of the master settings file
 ```
 
 # 3. Building the code
 
 You build once, after downloading a new version. The commands are run from the top directory `ENACode/`.
+
+To get the code:
+```
+git clone https://github.com/SHIELD-DRIVE/ENACode.git
+cd ENACode
+```
+Later, `git pull` in `ENACode/` fetches a new version; then build again.
 
 ## On a workstation
 
@@ -193,6 +202,22 @@ Extended single-ion and multi-ion models. The single-ion model uses the standard
 | 14–20 | INCA / Ultra | 8.38, 18.0, 29.0, 43.9, 33.5, 70, 80 |
 
 # 5. Running a steady-state map
+
+## The sample snapshot
+
+To try the code, download the sample input files from Zenodo ([doi:10.5281/zenodo.23675226](https://doi.org/10.5281/zenodo.23675226)) into `secondary_files/input/`, replacing the placeholder files there. From the top directory:
+```
+curl -L -o secondary_files/input/plasma.dat "https://zenodo.org/records/23675227/files/plasma.dat?download=1"
+curl -L -o secondary_files/input/neutrals.dat "https://zenodo.org/records/23675227/files/neutrals.dat?download=1"
+curl -L -o secondary_files/input/boundaries.txt "https://zenodo.org/records/23675227/files/boundaries.txt?download=1"
+curl -L -o secondary_files/input/streamlines.dat "https://zenodo.org/records/23675227/files/streamlines.dat?download=1"
+```
+The master settings file `enacpp/configs/all_settings.toml` reads them as they are (single-ion model). Make the band 13 map and plot it:
+```
+enacpp/build/ena_run enacpp/configs/all_settings.toml --bands 13
+python3 enacpp/tools/ena_plot.py secondary_files/output/flux_band13.h5
+```
+The run takes a few seconds; the plot is `secondary_files/output/flux_band13_total_nose.png`. The log warns about 427 undetermined (region 5) cells and 364 lines of sight that end in one; that is expected for this solution.
 
 ## On a workstation
 

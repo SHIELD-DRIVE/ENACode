@@ -18,21 +18,31 @@ All-sky maps of heliospheric **energetic neutral atom (ENA) flux** from 3D MHD s
 
 ## Quick start
 
-Put the code in a folder named `enacpp` inside your working directory, next to your input files, and run everything from the working directory:
+Get the code and build it; all commands are run from the top folder, `ENACode`:
 ```
-git clone <repository URL> enacpp
+git clone https://github.com/SHIELD-DRIVE/ENACode.git
+cd ENACode
 cmake -S enacpp -B enacpp/build
 cmake --build enacpp/build -j
 enacpp/build/test_m2 enacpp/build/test_tmp
 ```
 The test should end with `69 checks, 0 failures`.
 
-Make your settings file from the master file, set your input files in it, and run:
+**Sample run.** The input files of a single-ion MHD solution (Kornbleuth et al. 2023; about 1 GB) are on Zenodo, [doi:10.5281/zenodo.23675226](https://doi.org/10.5281/zenodo.23675226). Download them into `secondary_files/input/`, replacing the placeholder files there:
 ```
-cp enacpp/configs/all_settings.toml enacpp/configs/my_run.toml
-enacpp/build/ena_run enacpp/configs/my_run.toml
-python3 enacpp/tools/ena_plot.py output/flux_band13.h5
+curl -L -o secondary_files/input/plasma.dat "https://zenodo.org/records/23675227/files/plasma.dat?download=1"
+curl -L -o secondary_files/input/neutrals.dat "https://zenodo.org/records/23675227/files/neutrals.dat?download=1"
+curl -L -o secondary_files/input/boundaries.txt "https://zenodo.org/records/23675227/files/boundaries.txt?download=1"
+curl -L -o secondary_files/input/streamlines.dat "https://zenodo.org/records/23675227/files/streamlines.dat?download=1"
 ```
+Then make the IBEX-Hi band 13 map (a few seconds) and plot it:
+```
+enacpp/build/ena_run enacpp/configs/all_settings.toml --bands 13
+python3 enacpp/tools/ena_plot.py secondary_files/output/flux_band13.h5
+```
+The map is written to `secondary_files/output/flux_band13_total_nose.png`.
+
+**Your own runs:** copy the master settings file (`cp enacpp/configs/all_settings.toml enacpp/configs/my_run.toml`), set your input files and options in the copy, and run `enacpp/build/ena_run enacpp/configs/my_run.toml`.
 
 ## Documentation
 
@@ -50,3 +60,4 @@ Marc Kornbleuth, Boston University: [kmarc@bu.edu](mailto:kmarc@bu.edu)
 - Kornbleuth, M., et al., ApJL, 944, L47, https://doi.org/10.3847/2041-8213/acb9e0
 - Galli, A. et al., ApJL, 954, L24, https://doi.org/10.3847/2041-8213/aced9b
 - Kornbleuth, M., et al., ApJ, 1004, 18, https://doi.org/10.3847/1538-4357/ae67fc
+- Sample input files: Kornbleuth, M., Sample Single-ion BU MHD Input Files for SHIELD ENA Model, Zenodo, https://doi.org/10.5281/zenodo.23675226
