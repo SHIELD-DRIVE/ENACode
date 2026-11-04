@@ -36,6 +36,12 @@ Tecplot is run in one of two ways:
     between ena_fixneutrals and ena_trace). Tecplot writes its messages to batch.log in the work folder; a failed run shows
     the end of it. The resulting files are the same: the same macros run in the same order.
 
+An input with `to_szplt = true` in its [input.NAME] section (e.g. MHD solutions written as .plt)
+is first saved as .szplt in the work folder, with the command Tecplot records for File > Write Data
+File > .szplt, and the macros get that file. An input that is already .szplt is used as it is.
+Tecplot reads .szplt files with the Subzone Data Loader of the macros, and interpolates quickly
+from them (Tecplot 2025 R2 took hours to interpolate the neutrals from a .plt file).
+
 For each snapshot, the outputs are written under temporary names (<name>.part), checked
 (grid files: header removed, the rows of theta index above theta_index_max dropped where set, then
 one row per grid cell, the expected number of columns, no NaN/Inf; the streamline file: the
@@ -250,6 +256,12 @@ def macro_body(path):
         return [ln for ln in f if not ln.startswith("#!MC")]
 
 
+def save_szplt_commands(source, target):
+    """Load `source` into a new layout and save it as the .szplt file `target`."""
+    return (load_commands(source) + "$!ExtendedCommand\n  CommandProcessorID = 'Tecplot Subzone Data Tools'\n"
+            f"  Command = 'WRITEDATASET FILENAME=\"{os.path.abspath(target)}\"'\n")
+
+
 def varset_lines(variables):
     """$!VARSET lines that give every macro variable its file."""
     return [f'$!VARSET |{k}| = "{v}"\n' for k, v in variables.items()]
@@ -369,6 +381,10 @@ def main():
             print(f"inputs are copied to {stagedir} first ({shutil.disk_usage(stagedir).free / 2**30:.0f} GB free there)",
                   flush=True)
 
+    def szplt_name(n, tag):
+        """The .szplt copy of input n in the work folder (one for all snapshots for a fixed input)."""
+        return os.path.join(workdir, f"{n}.szplt" if "file" in inputs[n] else f"{n}_{tag}.szplt")
+
     def load(path):
         """Loads one input file into a new layout, as done by hand before running a macro."""
         if a.load_by_macro:
@@ -400,11 +416,14 @@ def main():
                 if st.get("load"):
                     g.write(load_commands(read[st["load"]] if st["load"] in read else work[st["load"]]))
                 g.writelines(macro_body(st["macro"]))
+        run_tecplot_batch(path, tag, ", ".join(st.get("name", st["macro"]) for st in group))
+
+    def run_tecplot_batch(path, tag, names):
+        """Runs the macro file `path` with "tec360 -b -p" in the work folder and checks batch.log."""
         # Tecplot's batch mode writes its messages (and errors) to batch.log in the folder it runs in
         log = os.path.join(workdir, "batch.log")
         if os.path.exists(log):
             os.remove(log)
-        names = ", ".join(st.get("name", st["macro"]) for st in group)
         ts = time.time()
         proc = subprocess.run([a.tecplot, "-b", "-p", path], cwd=workdir, stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT, universal_newlines=True)
@@ -415,7 +434,7 @@ def main():
                 print(f"[{tag}]     tecplot: {ln}")
             for ln in (errors or logtext)[-15:]:
                 print(f"[{tag}]     batch.log: {ln}")
-            raise RuntimeError(f"Tecplot (batch) failed in the steps {names} (exit status {proc.returncode}); "
+            raise RuntimeError(f"Tecplot (batch) failed in: {names} (exit status {proc.returncode}); "
                                f"the macro is {path}")
         if not keep_work:
             os.remove(path)
@@ -454,6 +473,9 @@ def main():
                 print(f"   input {n}: {p}" + ("" if os.path.exists(p) else "   (FILE NOT FOUND)"))
             if stagedir:
                 print(f"   (the inputs are copied to {stagedir} first, and Tecplot reads the copies)")
+            for n, p in src.items():
+                if inputs[n].get("to_szplt") and not p.endswith(".szplt"):
+                    print(f"   input {n} is first saved as .szplt: {szplt_name(n, tag)}")
             for k, v in variables.items():
                 print(f"   |{k}| = {v}")
             for st in steps:
@@ -487,6 +509,33 @@ def main():
                               f"{time.time() - ts:.0f} s", flush=True)
                     read[n] = dst
                     variables[inputs[n]["macro_variable"]] = os.path.abspath(dst)
+
+            # inputs with to_szplt = true that are not .szplt yet: save them as .szplt first
+            todo = [(n, p, szplt_name(n, tag)) for n, p in read.items()
+                    if inputs[n].get("to_szplt") and not p.endswith(".szplt")]
+            for n, p, dst in todo:
+                if "file" not in inputs[n] and not keep_work:
+                    staged.append(dst)  # deleted with the snapshot; a fixed input's copy is kept
+            todo = [(n, p, dst) for n, p, dst in todo if not os.path.exists(dst) or "file" not in inputs[n]]
+            if todo:
+                ts = time.time()
+                path = os.path.abspath(os.path.join(workdir, f"to_szplt_{tag}.mcr"))
+                with open(path, "w") as g:
+                    g.write("#!MC 1410\n# written by tecplot_prep.py: inputs saved as .szplt\n")
+                    for n, p, dst in todo:
+                        g.write(save_szplt_commands(p, dst))
+                names = "save as .szplt: " + ", ".join(n for n, _, _ in todo)
+                if a.batch:
+                    run_tecplot_batch(path, tag, names)
+                else:
+                    tp.macro.execute_file(path)
+                    print(f"[{tag}]   {names}: {time.time() - ts:.0f} s", flush=True)
+                if not keep_work and os.path.exists(path):
+                    os.remove(path)
+            for n, p in list(read.items()):
+                if inputs[n].get("to_szplt") and not p.endswith(".szplt"):
+                    read[n] = szplt_name(n, tag)
+                    variables[inputs[n]["macro_variable"]] = os.path.abspath(read[n])
 
             group = []  # --batch: the macro steps since the last program step, run in one Tecplot
             for st in steps + [None]:
