@@ -28,6 +28,11 @@
 
 [run]
 output_dir = "secondary_files/output"   # where maps go (default "output"); --out DIR overrides
+tecplot_cells = false         # true (or ena_run --tecplot): for each band, also write the per-cell values
+                              #   (populations, fluxes, extinction, partition, plasma, B, ...) at the band's
+                              #   centre energy as a Tecplot file, output_dir/tec/denstemptest_EbandNN.dat
+                              #   (the 43 columns of the original code's file, with a Tecplot header).
+                              #   Single-ion model, steady-state runs. Default false.
 
 [model]
 source = "standard"           # "standard" (BU MHD model) or "moscow" (Moscow model: region codes remapped;

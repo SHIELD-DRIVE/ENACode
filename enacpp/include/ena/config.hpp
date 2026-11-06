@@ -259,6 +259,10 @@ struct TimeDependentConfig {
 struct RunConfig {
   std::string source_path;
   std::string output_dir = "output";
+  // [run] tecplot_cells (or ena_run --tecplot): also write, for each band, a Tecplot file of the
+  // per-cell values at the band's centre energy (single-ion model, steady state):
+  // <output_dir>/tec/denstemptest_EbandNN.dat
+  bool tecplot_cells = false;
   std::string model_source = "standard";  // "standard" | "moscow"
   // "four_population_ts" (single ion, Kornbleuth+2023), "extended_si" or
   // "multi_ion_inca" (Kornbleuth+2026)

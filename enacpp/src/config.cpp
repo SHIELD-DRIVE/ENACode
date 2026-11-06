@@ -317,6 +317,7 @@ RunConfig config_from_toml(const TomlTable& t, const std::string& source) {
 
   if (auto* run = t.table("run")) {
     c.output_dir = run->get_string("output_dir", c.output_dir);
+    c.tecplot_cells = run->get_bool("tecplot_cells", c.tecplot_cells);
     const std::string mode = run->get_string("mode", "fixed");
     if (mode != "fixed")
       throw std::runtime_error("run.mode = \"" + mode + "\": this version has no faithful mode; use the version 1.0 "

@@ -235,6 +235,7 @@ Useful options:
 | `--threads N` | use N processor cores (default: all) |
 | `--set section.name=value` | override one setting (repeatable) |
 | `--no-legacy` | do not write the legacy count-rate `.dat` files |
+| `--tecplot` | also write the per-cell values of each band at its centre energy for Tecplot (single-ion model; section 7) |
 | `--dump DIR` | also write intermediate arrays (HDF5), e.g. the per-cell values built from the streamlines |
 
 The program prints its settings, checks of the inputs, and its progress. A band takes seconds to a few minutes, depending on the machine and the number of cores. The results are the same for any number of cores.
@@ -312,6 +313,7 @@ In the output directory:
 | `Opher_multiion_withneutrals<TAG>CountRateKappa<k>EbandNN.dat` | count rates in a legacy text format (tags PUI1, PUI2, PUI3, SW, CombPUIs, …), for older plotting scripts; `--no-legacy` turns them off |
 | `time_dependent_summary.txt` | one line per band and window, with the coverage (time-dependent runs) |
 | `heliosheath_pockets.txt` | lines of sight that cross the termination shock more than once (if any) |
+| `tec/denstemptest_EbandNN.dat` | with `--tecplot` (or `[run] tecplot_cells = true`), single-ion model: every grid cell's values at the band's centre energy, for Tecplot: the population densities, temperatures and fluxes, the extinction, the partition values, the plasma, B and the neutral density, in the 43 columns of the original code's file. It has a Tecplot header, so it loads directly. About 420 MB per band. |
 
 Maps are arrays of 30 × 60 values: θ = 0, 6, …, 174° (north pole first) by φ = 0, 6, …, 354°, in the simulation frame.
 

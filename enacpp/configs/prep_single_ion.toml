@@ -23,8 +23,10 @@ first_index = 0               # the first snapshot (0 = the first file of the li
 # ---- inputs of each snapshot: pattern = "...{index:03}...", glob = "..." (sorted by name),
 # ---- list = "file with one path per line, in snapshot order", or file = "..." (the same for all)
 [input.mhd]
-glob = "mhd/3d__var_2_t*.szplt"                 # EXAMPLE: the MHD solutions (.szplt), sorted by name = by time
+glob = "mhd/3d__var_2_t*.szplt"                 # EXAMPLE: the MHD solutions (.szplt or .plt), sorted by name = by time
 macro_variable = "MHDFILE"
+to_szplt = true                                 # a .plt solution is first saved as .szplt in the work folder (step 2c
+                                                #   reads .szplt); a .szplt solution is used as it is
 
 [input.neutral_source]
 glob = "neutrals/3d_var_region0_1_t*_amrex.dat" # EXAMPLE: the neutral solutions, one per MHD solution, same order

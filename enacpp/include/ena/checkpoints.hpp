@@ -49,4 +49,13 @@ void write_band_flux(const RunConfig& cfg, const BandResult& b, const std::strin
 // is added to the file names before .dat (time-dependent maps: the window).
 void write_legacy_countrate(const RunConfig& cfg, const BandResult& b, const std::string& dir, const std::string& suffix = "");
 
+// Tecplot file of the per-cell values of one energy, single-ion model ([run] tecplot_cells):
+// the 43 columns of the original code's denstemptest_EbandNN.dat, in the same order and units,
+// with a Tecplot header (one ordered zone, I = r, J = phi, K = theta, point format). Rows run
+// over the integration window r_lower to r_upper (excluding r_upper, as the original), and the
+// last theta row is repeated at theta = 180 deg so that Tecplot closes the grid at the south
+// pole. `r` must come from make_flux with diagnostics.
+void write_tecplot_cells(const RunConfig& cfg, const Snapshot& snap, const StreamFields& stream,
+                         const EnergyResult& r, int band, const std::string& path);
+
 }  // namespace ena

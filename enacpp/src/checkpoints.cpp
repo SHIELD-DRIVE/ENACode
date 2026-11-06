@@ -1,5 +1,7 @@
 #include "ena/checkpoints.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <stdexcept>
 
@@ -260,6 +262,69 @@ void write_legacy_countrate(const RunConfig& cfg, const BandResult& b, const std
       for (int p = 0; p < c.nphi(); ++p) std::fprintf(f, "%24.16e\n", c(t, p));
     std::fclose(f);
   }
+}
+
+void write_tecplot_cells(const RunConfig& cfg, const Snapshot& snap, const StreamFields& st, const EnergyResult& r,
+                         int band, const std::string& path) {
+  if (!r.has_diagnostics || r.dens_test1.empty())
+    throw std::runtime_error("write_tecplot_cells: needs the single-ion per-cell values (make_flux with diagnostics)");
+  const Grid& g = cfg.grid;
+  const PlasmaFluid& pl = snap.plasma.at(0);
+  const Field3D<double>& nh = snap.neutrals.at(0).n;
+  // the radial rows of the original file: k = rlower .. rupper - 1
+  const int k0 = g.k_of(cfg.r_lower), k1 = std::min(g.k_of(cfg.r_upper), g.nr);
+  if (k1 <= k0) throw std::runtime_error("write_tecplot_cells: empty radial window (integration r_lower/r_upper)");
+  const std::string tmp = path + ".part";
+  FILE* f = std::fopen(tmp.c_str(), "w");
+  if (!f) throw std::runtime_error("cannot write " + tmp);
+  // 43 variables, in the order and units of the original file (velocities of the plasma file in
+  // km/s as there; the streamline-derived speeds in cm/s, as the code uses them)
+  static const char* names[43] = {
+      "X AU", "Y AU", "Z AU", "region", "i (theta index)", "j (phi index)", "k (r index)", "theta deg", "phi deg", "r AU",
+      "n transmitted cm^-3", "T transmitted K", "n reflected cm^-3", "T reflected K", "n accelerated cm^-3",
+      "T accelerated K", "n solar wind cm^-3", "T solar wind K", "n plasma cm^-3", "T plasma K", "v_r km/s",
+      "v_t km/s", "f_test1 (transmitted f at v_plas)", "lc_test (1 = cooling-length cell)", "extinction",
+      "v_x streamlines cm/s", "v_y streamlines cm/s", "v_z streamlines cm/s", "flux transmitted cm^-2 s^-1 sr^-1 keV^-1",
+      "flux reflected cm^-2 s^-1 sr^-1 keV^-1", "flux accelerated cm^-2 s^-1 sr^-1 keV^-1",
+      "flux solar wind cm^-2 s^-1 sr^-1 keV^-1", "B_x G", "B_y G", "B_z G", "n H cm^-3", "v_plas cm/s",
+      "accelerated fraction", "E_min accelerated keV", "E_max accelerated keV", "kappa_ref (delta)",
+      "v_shock cm/s", "vt_stream (0, as in the original)"};
+  std::fprintf(f, "# ENA code: per-cell values at the centre energy of band %02d, E = %.5f keV (single-ion model)\n",
+               band, r.energy);
+  std::fprintf(f, "# the fluxes include extinction and survival as in the maps; the population and flux columns "
+                  "hold 0 in cells the line-of-sight sum does not use\n");
+  std::fprintf(f, "TITLE = \"ENA cells, band %02d, E = %.5f keV\"\nVARIABLES =", band, r.energy);
+  for (const char* n : names) std::fprintf(f, " \"%s\"", n);
+  std::fprintf(f, "\nZONE T=\"band %02d, E = %.5f keV\", I=%d, J=%d, K=%d, DATAPACKING=POINT\n", band, r.energy, k1 - k0,
+               g.nphi, g.ntheta + 1);
+  const double d2r = std::acos(-1.0) / 180.0;
+  // row i of the grid; with pole = true the last theta row again, placed at theta = 180 deg
+  auto row = [&](int i, int j, int k, bool pole) {
+    const double th = pole ? 180.0 : g.theta(i), ph = g.phi(j), rr = g.r(k);
+    double ext = r.ext(i, j, k);
+    if (std::isnan(ext)) ext = 0.0;  // as the original
+    std::fprintf(f, "%.8e %.8e %.8e %d %d %d %d %.8g %.8g %.8g", rr * std::cos(ph * d2r) * std::sin(th * d2r),
+                 rr * std::sin(ph * d2r) * std::sin(th * d2r), rr * std::cos(th * d2r), int(snap.region(i, j, k)), i, j, k,
+                 th, ph, rr);
+    const double v[33] = {r.dens_test1(i, j, k), r.temp_test1(i, j, k), r.dens_test2(i, j, k), r.temp_test2(i, j, k),
+                          r.dens_test3(i, j, k), r.temp_test3(i, j, k), r.dens_test_sw(i, j, k), r.temp_test_sw(i, j, k),
+                          pl.n(i, j, k), r.temp_test_p(i, j, k), pl.vr(i, j, k) / 1e5, pl.vt(i, j, k) / 1e5,
+                          r.f_test1(i, j, k), double(r.lc_test(i, j, k)), ext, st.vx(i, j, k), st.vy(i, j, k),
+                          st.vz(i, j, k), r.flux_test1(i, j, k), r.flux_test2(i, j, k), r.flux_test3(i, j, k),
+                          r.flux_test_sw(i, j, k), snap.Bx(i, j, k), snap.By(i, j, k), snap.Bz(i, j, k), nh(i, j, k),
+                          r.v_plas(i, j, k), st.nen(i, j, k), st.een(i, j, k), st.em(i, j, k), st.kappa_ref(i, j, k),
+                          st.vshock(i, j, k), 0.0};
+    for (double x : v) std::fprintf(f, " %.8e", x);
+    std::fputc('\n', f);
+  };
+  for (int i = 0; i < g.ntheta; ++i)
+    for (int j = 0; j < g.nphi; ++j)
+      for (int k = k0; k < k1; ++k) row(i, j, k, false);
+  for (int j = 0; j < g.nphi; ++j)
+    for (int k = k0; k < k1; ++k) row(g.ntheta - 1, j, k, true);
+  const bool ok = std::ferror(f) == 0;
+  if (std::fclose(f) != 0 || !ok) throw std::runtime_error("error writing " + tmp + " (disk full?)");
+  if (std::rename(tmp.c_str(), path.c_str()) != 0) throw std::runtime_error("cannot rename " + tmp + " to " + path);
 }
 
 }  // namespace ena

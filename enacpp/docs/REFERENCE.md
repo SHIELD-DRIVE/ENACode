@@ -181,6 +181,7 @@ The reference TS distance r_TS,V2 of the partition fits is computed from the mod
 Written to `output_dir` (or `--out DIR`):
 - **`flux_bandNN.h5`**: the main output. Band-averaged ENA flux maps (cm^-2 s^-1 sr^-1 keV^-1), one dataset per component: `transmitted`, `reflected`, `accelerated`, `solar_wind`, `total`. Arrays are [theta][phi], with theta = i*dtheta (i = 0 is the north pole). The file also records the code version, the settings, the band limits and the geometric factor.
 - **`Opher_multiion_withneutrals<TAG>CountRateKappa<k>EbandNN.dat`**: legacy count-rate text files (TAG = PUI1, PUI2, PUI3, SW, CombPUIs), one value per cell, for older plotting tools. Turn them off with `--no-legacy`.
+- **`tec/denstemptest_EbandNN.dat`** (with `--tecplot` or `[run] tecplot_cells = true`; single-ion model, steady state): the per-cell values of each band at its centre energy E_c, for Tecplot. E_c is an extra `make_flux` evaluation, not one of the sub-band energies of the band sum, so every column belongs to E_c and the maps do not change. The 43 columns of the original code's file, in the same order and units: x, y, z (AU), region code, the indices i, j, k, θ, φ, r; density and temperature of the transmitted, reflected, accelerated and solar-wind populations; plasma density and temperature, v_r, v_t (km/s); f_test1, lc_test, the extinction; the streamline flow v_x, v_y, v_z (cm/s); the flux of each population; B_x, B_y, B_z (G); the neutral density; v_plas; the accelerated fraction, E_min and E_max of the accelerated ions (keV), kappa_ref and v_shock (cm/s); and a last column that is always 0, kept for the layout. The file has a Tecplot header (one ordered zone: I = r over the integration window, J = φ, K = θ, point format) and loads directly. Rows run from `r_lower` to `r_upper` (excluded), and the last θ row is repeated at θ = 180° so the grid closes at the south pole. About 420 MB per band; writing it takes several seconds per band.
 
 ## Maps: `tools/ena_plot.py`
 
@@ -286,12 +287,13 @@ For time-dependent runs, every MHD solution of a series has to become the four i
 - Step 1 of the single-ion input preparation (`configs/macros/single_ion/1_fix_neutrals.mcr`) without Tecplot: reads the neutral solution (Tecplot ASCII, one FEPOINT zone of bricks, 53 variables), computes the total and per-population neutral moments and temperatures, and writes the 33 variables of Tecplot's fixed-neutral file as a Tecplot binary file (version 112). Run by `tools/tecplot_prep.py` with `configs/prep_single_ion.toml` (step 1).
 - Results are the same for any thread count.
 
-**`ena_run run.toml [--snapshot N] [--out DIR] [--dump DIR] [--bands 9,13] [--set table.key=value] [--no-legacy] [--threads N]`**
+**`ena_run run.toml [--snapshot N] [--out DIR] [--dump DIR] [--bands 9,13] [--set table.key=value] [--no-legacy] [--tecplot] [--threads N]`**
 - Full run for one snapshot: inputs, streamline processing, flux for every energy of each band, outputs.
 - With a `[time_dependent]` section: time-dependent maps from all snapshots (see above). `--snapshot`, `--dump` and `--stream-fields` are for steady-state runs only.
 - `--bands` overrides `[bands] run` in the configuration.
 - `--set table.key=value` overrides any configuration value (repeatable), e.g. `--set physics.fitted_esw=false`.
 - `--dump DIR` writes the checkpoints C0-C5 (about 15 MB per energy for C4).
+- `--tecplot` writes the Tecplot file of the per-cell values at each band's centre energy, `OUT/tec/denstemptest_EbandNN.dat` (see Outputs).
 - Prints the settings in effect and checks of the inputs:
   - r_TS,V2, and how many streamlines have a TS;
   - region-5 (undetermined) cells, lines of sight that leave and re-enter the heliosheath, and lines of sight whose heliosheath ends at a region-5 cell;

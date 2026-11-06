@@ -1,4 +1,11 @@
-To post-process data files:
+Tecplot files of the per-cell values: denstemptest_EbandNN.dat
 
-cat header.dat denstemptest_EbandXX.dat > tec_denstemptest_EbandXX.dat
-./preplot.p
+Written by ena_run with --tecplot (or [run] tecplot_cells = true in the settings file),
+single-ion model, steady-state runs: one file per band, with every grid cell's values at the
+band's centre energy, in the 43 columns of the original code's file.
+
+The files have a Tecplot header, so they load directly in Tecplot (File > Load Data);
+header.dat is no longer needed. For faster loading, Tecplot's preplot can convert one to
+binary:
+
+preplot denstemptest_EbandNN.dat denstemptest_EbandNN.plt

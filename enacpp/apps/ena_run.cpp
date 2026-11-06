@@ -9,6 +9,10 @@
 // --dump  also write the checkpoints C0-C5: intermediate arrays, e.g. the per-cell
 //         streamline fields (C3) and the per-energy fluxes (C4)
 // --bands overrides [bands] run from the config
+// --tecplot  also write, for each band, the per-cell values at the band's centre energy as a
+//         Tecplot file, OUT/tec/denstemptest_EbandNN.dat (as [run] tecplot_cells = true;
+//         single-ion model, steady state). The maps are unchanged: the centre energy is an
+//         extra evaluation, not part of the band sum.
 // --threads N  OpenMP threads per rank (default: OMP_NUM_THREADS, or all cores);
 //         the maps are identical for any thread count
 // MPI (build with -DENA_WITH_MPI=ON): mpiexec -n R ena_run run.toml --threads T
@@ -84,7 +88,7 @@ int run_main(int argc, char** argv) {
   mallopt(M_TRIM_THRESHOLD, 1 << 30);
 #endif
   if (argc < 2) {
-    std::fprintf(stderr, "usage: %s run.toml [--snapshot N] [--out DIR] [--dump DIR] [--no-legacy] [--bands 9,13] [--threads N]\n",
+    std::fprintf(stderr, "usage: %s run.toml [--snapshot N] [--out DIR] [--dump DIR] [--no-legacy] [--tecplot] [--bands 9,13] [--threads N]\n",
                  argv[0]);
     return 2;
   }
@@ -92,7 +96,7 @@ int run_main(int argc, char** argv) {
     std::string cfg_path = argv[1], dump_dir, out_dir, bands_arg, stream_file;
     std::size_t snap_index = 0;
     std::vector<std::string> overrides;
-    bool legacy = true, snap_given = false;
+    bool legacy = true, snap_given = false, tecplot = false;
     for (int a = 2; a < argc; ++a) {
       if (!std::strcmp(argv[a], "--snapshot") && a + 1 < argc) { snap_index = std::stoul(argv[++a]); snap_given = true; }
       else if (!std::strcmp(argv[a], "--dump") && a + 1 < argc) dump_dir = argv[++a];
@@ -101,6 +105,7 @@ int run_main(int argc, char** argv) {
       else if (!std::strcmp(argv[a], "--stream-fields") && a + 1 < argc) stream_file = argv[++a];
       else if (!std::strcmp(argv[a], "--set") && a + 1 < argc) overrides.push_back(argv[++a]);
       else if (!std::strcmp(argv[a], "--no-legacy")) legacy = false;
+      else if (!std::strcmp(argv[a], "--tecplot")) tecplot = true;
       else if (!std::strcmp(argv[a], "--threads") && a + 1 < argc) {
         const int n = std::stoi(argv[++a]);
         if (n < 1) throw std::runtime_error("--threads needs a positive number");
@@ -115,6 +120,15 @@ int run_main(int argc, char** argv) {
       for (int bad : cfg.sensors.unusable)
         if (b == bad) throw std::runtime_error("band " + std::to_string(b) + " is listed as unusable in [sensors]");
     if (out_dir.empty()) out_dir = cfg.output_dir;
+    if (tecplot) cfg.tecplot_cells = true;
+    if (cfg.tecplot_cells) {
+      if (cfg.populations != "four_population_ts")
+        throw std::runtime_error("the Tecplot cell file (--tecplot, [run] tecplot_cells) is available for the single-ion "
+                                 "model (populations = \"four_population_ts\") only");
+      if (cfg.time_dependent.enabled)
+        throw std::runtime_error("the Tecplot cell file (--tecplot, [run] tecplot_cells) is for steady-state runs; "
+                                 "remove it or the [time_dependent] section");
+    }
     std::filesystem::create_directories(out_dir);
     const bool dump = !dump_dir.empty();
     if (dump) {
@@ -204,6 +218,17 @@ int run_main(int argc, char** argv) {
       if (dump) write_c5_band(b, dump_dir);
       if (checkpoints_available()) write_band_flux(cfg, b, out_dir, info);
       if (legacy) write_legacy_countrate(cfg, b, out_dir);
+      if (cfg.tecplot_cells) {
+        // the per-cell values at exactly the band's centre energy: one more make_flux call, outside
+        // the band sum (whose sub-band energies need not include the centre)
+        const EnergyResult rc = make_flux(ctx, b.ecen, band, true);
+        std::filesystem::create_directories(out_dir + "/tec");
+        char name[64];
+        std::snprintf(name, sizeof name, "/tec/denstemptest_Eband%02d.dat", band);
+        write_tecplot_cells(cfg, snap, stream, rc, band, out_dir + name);
+        std::printf("  band %02d  Tecplot cell file at the centre energy E = %.5f keV: %s%s\n", band, b.ecen,
+                    out_dir.c_str(), name);
+      }
       std::printf("Band %02d (%.3f-%.3f keV, %d energies) done in %.1f s\n", band, b.emin, b.emax, n_energy, since(t0));
     }
     std::printf("Total run time %.1f s; output in %s\n", since(t_start), out_dir.c_str());
