@@ -55,6 +55,14 @@ format = "png"           # png, pdf, eps, svg
 dpi = 200
 # out = "maps"           # output directory (default: next to each input file)
 
+# Movies of time-dependent maps (ena_plot.py --movie, or movie = true): one movie per band, the windows in time order
+[movie]
+movie = false            # true: make movies instead of single maps
+frame_seconds = 1.0      # seconds per frame (time window)
+movie_format = "gif"     # "gif" (needs nothing else) or "mp4" (needs the ffmpeg program)
+movie_dpi = 120          # resolution of the frames
+time_label = true        # the time window in large type on each frame
+
 # Marker positions, ecliptic [lon, lat] deg. UPWIND and DOWNWIND come from the frame (below) unless given here.
 [markers]
 V1 = [254.0, 35.0]

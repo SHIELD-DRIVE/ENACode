@@ -399,9 +399,20 @@ python3 enacpp/tools/ena_plot.py OUT/flux_band*.h5 --config enacpp/configs/plot_
 | `--format pdf` | PDF (or png, eps, svg) |
 | `--ratio OTHER.h5` | the ratio of two runs' maps |
 | `--idl --projection hammer` | the placement and projection of the original IDL plots, for comparison with old figures |
+| `--movie` | time-dependent maps: one movie per band, the windows in time order (see below) |
 
 - **Settings file:** `enacpp/configs/plot_settings.toml` holds all plot settings.
 - **Legacy files:** the plotter also reads the legacy count-rate files (`…CountRate…EbandNN.dat`).
+
+**Movies of time-dependent maps.** `--movie` turns the maps of a time-dependent run into one movie per band, the time windows in order, each frame labelled with its window in large type:
+```
+python3 enacpp/tools/ena_plot.py OUT/flux_band*_*.h5 --movie --out maps
+python3 enacpp/tools/ena_plot.py OUT/flux_band13_*.h5 --movie --frame-seconds 0.5
+```
+- **Frame time:** `--frame-seconds` (default 1 second per window).
+- **Colour range:** the same in every frame of a band (the band limits or `--vmin`/`--vmax`, otherwise one range over all the band's windows), so changes in brightness are real.
+- **Format:** GIF by default, which plays in browsers and slide software and needs nothing beyond matplotlib; `--movie-format mp4` makes an MP4 where the `ffmpeg` program is installed.
+- **Output:** `flux_bandNN_total_nose_movie.gif` (with the component and view in the name) in `--out` or next to the files. All other options (view, component, scale, …) apply as for single maps.
 
 # 11. Checking results
 

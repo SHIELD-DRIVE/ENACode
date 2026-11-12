@@ -8,6 +8,8 @@
     python3 enacpp/tools/ena_plot.py OUT/flux_band03_2010-2011.h5 --component heliosheath_pui --log
     python3 enacpp/tools/ena_plot.py run_b/flux_band13.h5 --ratio run_a/flux_band13.h5
     python3 enacpp/tools/ena_plot.py OUT/flux_band13.h5 --write-ecliptic     # all components on a 6-deg ecliptic grid
+    python3 enacpp/tools/ena_plot.py OUT/flux_band13_*.h5 --movie            # time-dependent: one movie per band
+    python3 enacpp/tools/ena_plot.py OUT/flux_band*_*.h5 --movie --frame-seconds 0.5 --movie-format mp4
 
 Every option can be set in a plot settings file (--config; configs/plot_settings.toml
 lists them all); command-line options override the file. Input: the flux files of ena_run
@@ -47,6 +49,19 @@ with a black box per cell. Markers: UPWIND, V1, V2 on nose maps, DOWNWIND on tai
 --limits LONMIN LONMAX LATMIN LATMAX shows only a part of the sky (degrees relative to the
 map centre, longitude positive to the left).
 
+Movies
+------
+--movie turns the maps of a time-dependent run (flux_bandNN_<window>.h5) into one movie per band
+(and component), the windows in time order, each shown for --frame-seconds seconds (default 1).
+Each frame is the map as drawn without --movie, with its time window in large type at the right of
+the title line (--no-time-label: without). Every frame of a band has the same colour range, so
+that changes in brightness are real: band_limits or --vmin/--vmax where given, otherwise one
+range over all the band's frames. The frames all have the same size, so the map does not jump.
+--movie-format gif (default) needs nothing beyond matplotlib (it writes with Pillow, which
+matplotlib installs); mp4 needs the ffmpeg program. --movie-dpi sets the resolution (default
+120; the stills keep --dpi). Output: flux_bandNN_<component>_<view>_movie.gif in --out or next to
+the first file.
+
 Needs numpy, h5py and matplotlib (pip install numpy h5py matplotlib).
 """
 
@@ -55,7 +70,10 @@ import ast
 import glob
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 
 import numpy as np
 
@@ -116,6 +134,12 @@ DEFAULTS = {
     # [output]
     "format": "png", "dpi": 200, "out": None, "figsize": [9.0, 6.0], "fontsize": 12,
     "write_ecliptic": False, "ecliptic_res": 6.0,
+    # [movie] (time-dependent maps)
+    "movie": False,                       # one movie per band from the time windows, instead of single maps
+    "movie_format": "gif",                # gif (always available) or mp4 (needs ffmpeg)
+    "frame_seconds": 1.0,                 # how long each window is shown
+    "movie_dpi": 120,                     # resolution of the frames
+    "time_label": True,                   # the time window in large type on each frame
 }
 
 
@@ -511,6 +535,19 @@ def legend_formatter(style):
 
 
 def plot_map(path, s, R, common=None):
+    """Draws one map and saves it; returns the file name."""
+    fig, stem = draw_map(path, s, R, common)
+    out = s["out"] or os.path.dirname(path) or "."
+    os.makedirs(out, exist_ok=True)
+    name = os.path.join(out, f"{stem}.{s['format']}")
+    fig.savefig(name, dpi=int(s["dpi"]), bbox_inches="tight")
+    plt.close(fig)
+    return name
+
+
+def draw_map(path, s, R, common=None, time_label=False):
+    """Draws one map; returns the figure and the stem of its file name. With time_label, a
+    time-dependent map gets its window in large type at the right of the title line (movie frames)."""
     s = dict(s, _path=path)
     m, info = map_values(path, s)
     ntheta, nphi = m.shape
@@ -609,18 +646,100 @@ def plot_map(path, s, R, common=None):
         kept = int(info.get("include_incomplete_lines", 0)) == 1
         fig.text(0.5, 0.0, f"boxes: regions with missing flux ({int((cov == 0).sum())} cells"
                  f"{'' if kept else ', flux set to 0'})", ha="center", fontsize=s["fontsize"] * 0.7)
+    if time_label and "window_start_yr" in info:
+        # on the title line, right-aligned, so that it covers no part of the map
+        ax.set_title(f"{float(info['window_start_yr']):g}\u2013{float(info['window_end_yr']):g}", loc="right",
+                     fontsize=s["fontsize"] * 1.9, fontweight="bold")
     note = "placement of the original IDL plots" if s["idl"] else "ecliptic J2000"
     fig.text(0.99, 0.0, f"{note}; {s['projection']}; centre ({c_lon:.1f}, {c_lat:+.1f})", ha="right",
              fontsize=s["fontsize"] * 0.55, color="0.4")
 
     stem = os.path.splitext(os.path.basename(path))[0] + ("" if path.endswith(".dat") else f"_{s['component']}") + ("_ratio" if s.get("ratio") else "") + \
         ("_idl" if s["idl"] else "") + f"_{s['view'] if s['center'] is None else 'custom'}"
-    out = s["out"] or os.path.dirname(path) or "."
-    os.makedirs(out, exist_ok=True)
-    name = os.path.join(out, f"{stem}.{s['format']}")
-    fig.savefig(name, dpi=int(s["dpi"]), bbox_inches="tight")
-    plt.close(fig)
-    return name
+    return fig, stem
+
+
+def value_range(files, s):
+    """Smallest and largest value of the maps (cells with missing flux left out), or None."""
+    lo, hi = np.inf, -np.inf
+    for f in files:
+        m, info = map_values(f, s)
+        cov = info["coverage"]
+        vals = m[(cov != 0)] if cov is not None else m.ravel()
+        vals = vals[np.isfinite(vals) & ((vals > 0) if s["log"] else True)]
+        if vals.size:
+            lo, hi = min(lo, vals.min()), max(hi, vals.max())
+    return (lo, hi) if lo <= hi else None
+
+
+def make_movies(files, s, R):
+    """One movie per band from time-dependent maps: the windows in time order, each frame the
+    map with its window labelled, the same colour range and the same image size in every frame."""
+    try:
+        from PIL import Image  # installed with matplotlib
+    except ImportError:
+        sys.exit("--movie needs Pillow (pip install pillow); it normally comes with matplotlib")
+    fmt = str(s["movie_format"]).lower()
+    if fmt not in ("gif", "mp4"):
+        sys.exit(f"movie_format '{fmt}': use gif or mp4")
+    if fmt == "mp4" and not shutil.which("ffmpeg"):
+        sys.exit("--movie-format mp4 needs the ffmpeg program, which is not on this machine; use gif")
+    seconds = float(s["frame_seconds"])
+    if seconds <= 0:
+        sys.exit("--frame-seconds must be positive")
+    groups = {}
+    for f in files:
+        if f.endswith(".dat"):
+            sys.exit(f"{f}: --movie needs the HDF5 maps of a time-dependent run (flux_bandNN_<window>.h5)")
+        _, info = read_flux(f, s["component"])
+        if "window_start_yr" not in info:
+            sys.exit(f"{f}: not a time-dependent map (no time window); --movie needs flux_bandNN_<window>.h5 files")
+        band = int(info["band"]) if "band" in info else -1
+        groups.setdefault(band, []).append((float(info["window_start_yr"]), f))
+    names = []
+    for band, frames in sorted(groups.items()):
+        frames = [f for _, f in sorted(frames)]
+        if len(frames) < 2:
+            print(f"band {band:02d}: only one time window ({frames[0]}); no movie")
+            continue
+        fixed = (band in s["band_limits"]) or (s["vmin"] is not None and s["vmax"] is not None)
+        common = None if fixed else value_range(frames, s)  # one colour range for the whole movie
+        # pass 1: the area every frame needs, so that all frames have the same size
+        box = None
+        for f in frames:
+            fig, _ = draw_map(f, s, R, common, time_label=s["time_label"])
+            fig.canvas.draw()
+            bb = fig.get_tightbbox(fig.canvas.get_renderer())
+            box = bb if box is None else type(bb).union([box, bb])
+            plt.close(fig)
+        box = box.padded(0.1)
+        out = s["out"] or os.path.dirname(frames[0]) or "."
+        os.makedirs(out, exist_ok=True)
+        _, stem = draw_map(frames[0], s, R, common)
+        plt.close("all")
+        stem = re.sub(r"_(\d{4}(\.\d+)?-\d{4}(\.\d+)?)_", "_", stem)  # the window out of the name
+        name = os.path.join(out, f"{stem}_movie.{fmt}")
+        with tempfile.TemporaryDirectory() as tmp:
+            pngs = []
+            for k, f in enumerate(frames):  # pass 2: the frames
+                fig, _ = draw_map(f, s, R, common, time_label=s["time_label"])
+                png = os.path.join(tmp, f"frame_{k:04d}.png")
+                fig.savefig(png, dpi=int(s["movie_dpi"]), bbox_inches=box, facecolor="white")
+                plt.close(fig)
+                pngs.append(png)
+            if fmt == "gif":
+                ims = [Image.open(p).convert("RGB").convert("P", palette=Image.ADAPTIVE, colors=256) for p in pngs]
+                ims[0].save(name, save_all=True, append_images=ims[1:], duration=int(round(seconds * 1000)), loop=0)
+            else:
+                cmd = ["ffmpeg", "-y", "-loglevel", "error", "-framerate", f"{1.0 / seconds:g}",
+                       "-i", os.path.join(tmp, "frame_%04d.png"),
+                       "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p", "-c:v", "libx264", "-r", "25", name]
+                r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+                if r.returncode != 0:
+                    sys.exit(f"ffmpeg failed: {r.stdout.strip()}")
+        print(f"{name}: {len(frames)} frames, {seconds:g} s each")
+        names.append(name)
+    return names
 
 
 def write_ecliptic(path, R, res):
@@ -680,6 +799,13 @@ def main():
     ap.add_argument("--flow-ecliptic", type=float, nargs=2, metavar=("LON", "LAT"))
     ap.add_argument("--solar-axis", type=float, nargs=2, metavar=("INCLINATION", "NODE"))
     ap.add_argument("--write-ecliptic", action="store_const", const=True)
+    ap.add_argument("--movie", action="store_const", const=True,
+                    help="time-dependent maps: one movie per band, the windows in time order")
+    ap.add_argument("--movie-format", choices=["gif", "mp4"], help="gif (default) or mp4 (needs ffmpeg)")
+    ap.add_argument("--frame-seconds", type=float, help="seconds per frame (default 1)")
+    ap.add_argument("--movie-dpi", type=int, help="resolution of the movie frames (default 120)")
+    ap.add_argument("--no-time-label", dest="time_label", action="store_const", const=False,
+                    help="movie frames without the time window in large type")
     ap.add_argument("--ecliptic-res", type=float)
     a = ap.parse_args()
 
@@ -706,6 +832,9 @@ def main():
               f"in ecliptic J2000: check flow_sim, flow_ecliptic and solar_axis")
     R = sim_to_ecliptic(s["flow_sim"], s["flow_ecliptic"], s["solar_axis"])
     files = [g for f in a.files for g in (sorted(glob.glob(f)) or [f])]
+    if s["movie"]:
+        make_movies(files, s, R)
+        return
 
     common = {}
     if s["common_range"]:  # one colour range per band over all files

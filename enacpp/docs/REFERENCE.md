@@ -194,6 +194,7 @@ python3 enacpp/tools/ena_plot.py OUT/flux_band13.h5 --scale 1.8 --vmin 0 --vmax 
 python3 enacpp/tools/ena_plot.py OUT/flux_band*.h5 --config enacpp/configs/plot_settings.toml --out maps
 python3 enacpp/tools/ena_plot.py run_b/flux_band13.h5 --ratio run_a/flux_band13.h5 --cmap RdBu_r
 python3 enacpp/tools/ena_plot.py OUT/flux_band13.h5 --write-ecliptic          # all components on a regular 6-deg ecliptic grid
+python3 enacpp/tools/ena_plot.py OUT/flux_band*_*.h5 --movie --frame-seconds 0.5   # time-dependent maps: one movie per band
 python3 enacpp/tools/ena_plot.py old/Opher_multiion_withneutralsCombPUIsCountRateKappa1.00Eband13.dat --idl --projection hammer
 python3 enacpp/tools/test_ena_plot.py                                         # checks of the coordinate handling
 ```
@@ -213,6 +214,7 @@ The legacy count-rate files (`...<TAG>CountRateKappa<k>EbandNN.dat`) are read to
 
   A warning is printed when the chosen style is too coarse for the range (e.g. integer on 0–0.9).
 - **Scale type:** linear by default, `log = true` or `--log` for a log scale.
+- **Movies** (`movie = true` or `--movie`; time-dependent maps `flux_bandNN_<window>.h5` only): one movie per band and component, the windows in time order. Each frame is the map as drawn without `--movie`, with its window in large type at the right of the title line (`time_label = false` or `--no-time-label`: without). Every frame of a band has the same colour range: `[band_limits]` or `vmin`/`vmax` where given, otherwise one range over all the band's frames. The frames are drawn twice, first to find the area all of them need, so that every frame has the same size and the map does not move. `frame_seconds` (`--frame-seconds`, default 1) sets the time per frame, `movie_dpi` (`--movie-dpi`, default 120) the resolution. `movie_format = "gif"` (default; written with Pillow, which matplotlib installs) or `"mp4"` (`--movie-format mp4`; needs the `ffmpeg` program; H.264 at 25 frames per second, each window repeated for its time). Output: `flux_bandNN_<component>_<view>_movie.gif` in `out` or next to the first file.
 
 Output names: `<input stem>_<component>[_ratio][_idl]_<nose|tail|ecliptic|custom>.<format>`.
 
