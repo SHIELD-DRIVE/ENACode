@@ -80,6 +80,10 @@ target_link_libraries(ena_fixneutrals PRIVATE ena)
 # (see tools/tecplot_prep.py and configs/macros/single_ion/3_calculate_files_trace.mcr).
 add_executable(ena_trace apps/ena_trace.cpp)
 target_link_libraries(ena_trace PRIVATE ena)
+# Magnetic field-line topology (closed / open / interstellar) on the ENA grid, from the boundaries
+# file's B, to locate the heliopause where the region codes cannot (the low-latitude heliotail).
+add_executable(ena_fieldtopo apps/ena_fieldtopo.cpp)
+target_link_libraries(ena_fieldtopo PRIVATE ena)
 
 if(HDF5_FOUND)
   add_executable(ena_convert apps/ena_convert.cpp)
