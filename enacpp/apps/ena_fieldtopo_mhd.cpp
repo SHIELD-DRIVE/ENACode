@@ -8,9 +8,9 @@
 //                     [--threads N]
 //
 // Input: the MHD solution as BATS-R-US writes it for Tecplot: one FEBRICK zone whose nodes are the
-// cell centres, block after block (8 x 8 x 8 cells per block, as the file's BLOCKS aux data says),
-// and whose bricks join neighbouring centres, also across blocks. Variables are found by name:
-// X, Y, Z (AU), B_x, B_y, B_z and, for --hplim-ism, Hplim. The layout is checked when read.
+// cell centres and whose bricks join neighbouring centres (collapsed bricks where refinement levels
+// meet). The order of the nodes does not matter. Variables are found by name: X, Y, Z (AU),
+// B_x, B_y, B_z and, for --hplim-ism, Hplim.
 //
 // Tracing, the end conditions and the classes are those of ena_fieldtopo (see there), except that
 // this grid has no region codes: a direction reaches the ISM at z >= z_top or z <= z_bottom, at
@@ -19,12 +19,10 @@
 // r <= r_sun. The classes: 1 closed, 2 open, 3 interstellar, 4 ISM-connected, 0 undetermined,
 // -1 not traced.
 //
-// Interpolation: a point is located in its block through one lookup table per refinement level.
-// Inside the block's own lattice of cell centres B is interpolated trilinearly; between a block's
-// outer centres and its neighbours' (the outer half cell of a block), the file's bricks are used:
-// trilinearly in a brick whose 8 corners are distinct, by inverse-distance weighting in a
-// collapsed brick (where refinement levels meet), or from the nearest centre if no brick holds
-// the point.
+// Interpolation: a point is located in the brick that holds it (the bricks are indexed by size
+// class and position). In a brick with 8 distinct corners B is interpolated trilinearly, in a
+// collapsed brick by inverse-distance weights. A point in no brick is outside the domain. The step
+// is cell_fraction of the size of the brick.
 //
 // Seeds: the nodes inside --seed-box (default: a slab |y| <= 5 AU around y = 0), every N-th of them
 // with --seed-stride N; the other nodes are "not traced" (-1). Each seed is traced on its own, so the
@@ -174,86 +172,6 @@ Mesh read_mesh(const std::string& path, bool want_hplim) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// the BATS-R-US block structure: located by one hash table per block size
-// ---------------------------------------------------------------------------------------------
-
-constexpr int kB = 8, kBB = kB * kB * kB;
-
-struct Blocks {
-  long long n = 0;
-  std::vector<double> x0, y0, z0, dx;   // centre of cell (0,0,0) and cell size, per block
-  int sx = 1, sy = kB, sz = kB * kB;    // node offset of one step along x, y, z inside a block
-  double gx = 0, gy = 0, gz = 0;        // lower corner of the domain
-  double ex = 0, ey = 0, ez = 0;        // upper corner of the domain
-  struct Level { double size; std::unordered_map<uint64_t, int32_t> map; };
-  std::vector<Level> levels;            // finest first
-
-  static uint64_t key(long long i, long long j, long long k) {
-    return (uint64_t(i & 0x1FFFFF) << 42) | (uint64_t(j & 0x1FFFFF) << 21) | uint64_t(k & 0x1FFFFF);
-  }
-
-  void build(const Mesh& m) {
-    if (m.npts % kBB) throw std::runtime_error("the number of nodes is not a multiple of 8 x 8 x 8: not BATS-R-US blocks");
-    n = m.npts / kBB;
-    // which node offsets step along x, y and z: from the first block
-    auto d = [&](long long a, long long b, const std::vector<float>& c) { return double(c[b]) - double(c[a]); };
-    const long long o[3] = {1, kB, kB * kB};
-    for (int s = 0; s < 3; ++s) {
-      const double ax = std::fabs(d(0, o[s], m.x)), ay = std::fabs(d(0, o[s], m.y)), az = std::fabs(d(0, o[s], m.z));
-      if (ax > ay && ax > az) sx = int(o[s]); else if (ay > az) sy = int(o[s]); else sz = int(o[s]);
-    }
-    if (sx == sy || sy == sz || sx == sz) throw std::runtime_error("cannot tell the axes of the blocks' node order");
-    x0.resize(n); y0.resize(n); z0.resize(n); dx.resize(n);
-    gx = gy = gz = 1e300; ex = ey = ez = -1e300;
-    long long bad = 0;
-    for (long long b = 0; b < n; ++b) {
-      const long long base = b * kBB;
-      double cxmin = 1e300, cymin = 1e300, czmin = 1e300, cxmax = -1e300;
-      for (int q = 0; q < kBB; ++q) {
-        cxmin = std::min(cxmin, double(m.x[base + q])); cxmax = std::max(cxmax, double(m.x[base + q]));
-        cymin = std::min(cymin, double(m.y[base + q])); czmin = std::min(czmin, double(m.z[base + q]));
-      }
-      const double h = (cxmax - cxmin) / (kB - 1);
-      x0[b] = cxmin; y0[b] = cymin; z0[b] = czmin; dx[b] = h;
-      // the block must be a uniform 8 x 8 x 8 lattice in the node order found above
-      for (int k = 0; k < kB && !bad; k += kB - 1)
-        for (int j = 0; j < kB; j += kB - 1)
-          for (int i = 0; i < kB; i += kB - 1) {
-            const long long q = base + i * sx + j * sy + k * sz;
-            if (std::fabs(m.x[q] - (cxmin + i * h)) > 1e-3 * h || std::fabs(m.y[q] - (cymin + j * h)) > 1e-3 * h ||
-                std::fabs(m.z[q] - (czmin + k * h)) > 1e-3 * h)
-              ++bad;
-          }
-      if (bad) throw std::runtime_error("block " + std::to_string(b) + " is not a uniform 8 x 8 x 8 lattice of cell centres");
-      gx = std::min(gx, cxmin - h / 2); gy = std::min(gy, cymin - h / 2); gz = std::min(gz, czmin - h / 2);
-      ex = std::max(ex, cxmin + 7.5 * h); ey = std::max(ey, cymin + 7.5 * h); ez = std::max(ez, czmin + 7.5 * h);
-    }
-    for (long long b = 0; b < n; ++b) {
-      const double s = kB * dx[b];
-      Level* L = nullptr;
-      for (auto& l : levels) if (std::fabs(l.size - s) < 1e-6 * s) L = &l;
-      if (!L) { levels.push_back({s, {}}); L = &levels.back(); }
-      const long long i = std::llround((x0[b] - dx[b] / 2 - gx) / s), j = std::llround((y0[b] - dx[b] / 2 - gy) / s),
-                      k = std::llround((z0[b] - dx[b] / 2 - gz) / s);
-      L->map[key(i, j, k)] = int32_t(b);
-    }
-    std::sort(levels.begin(), levels.end(), [](const Level& a, const Level& b) { return a.size < b.size; });
-  }
-
-  // the block holding (x, y, z), or -1
-  long long find(double x, double y, double z) const {
-    for (const auto& L : levels) {
-      const long long i = (long long)std::floor((x - gx) / L.size), j = (long long)std::floor((y - gy) / L.size),
-                      k = (long long)std::floor((z - gz) / L.size);
-      if (i < 0 || j < 0 || k < 0) continue;
-      auto it = L.map.find(key(i, j, k));
-      if (it != L.map.end()) return it->second;
-    }
-    return -1;
-  }
-};
-
-// ---------------------------------------------------------------------------------------------
 // field and tracing
 // ---------------------------------------------------------------------------------------------
 
@@ -266,111 +184,150 @@ struct Settings {
   int substeps = 2;
 };
 
+// The bricks, indexed by size class and position: a point finds the brick that holds it without any
+// assumption on the order of the nodes. Each brick goes into the table of its size class (bucket
+// size = the class's size), under every bucket its box overlaps; a query tests the bricks of its
+// bucket in each class, finest first. Each thread first tries the brick of its previous query.
 struct Field {
   const Mesh& m;
-  const Blocks& B;
-  std::vector<int64_t> adj_start, adj_end;  // node -> bricks: adj[adj_start[i] .. adj_end[i])
-  std::vector<int32_t> adj;
+  double gx = 1e300, gy = 1e300, gz = 1e300, ex = -1e300, ey = -1e300, ez = -1e300;  // domain box
+  double smin = 0;  // the smallest brick size
+  struct Level { double size; std::vector<std::pair<uint64_t, int32_t>> keys; };
+  std::vector<Level> levels;
+  long long collapsed = 0, empty = 0;
 
-  Field(const Mesh& mesh, const Blocks& blocks) : m(mesh), B(blocks) {
-    const std::size_t n = std::size_t(m.npts);
-    adj_start.assign(n + 1, 0);
-    for (int32_t v : m.conn) ++adj_start[std::size_t(v) + 1];
-    for (std::size_t i = 0; i < n; ++i) adj_start[i + 1] += adj_start[i];
-    adj.resize(m.conn.size());
-    adj_end.assign(adj_start.begin(), adj_start.end() - 1);
-    for (std::size_t e = 0; e < std::size_t(m.nelem); ++e)
-      for (int c = 0; c < 8; ++c) {
-        const int32_t v = m.conn[e * 8 + c];
-        bool dup = false;  // a collapsed brick repeats nodes: list it once per node
-        for (int c2 = 0; c2 < c; ++c2) dup |= m.conn[e * 8 + c2] == v;
-        if (!dup) adj[adj_end[v]++] = int32_t(e);
-      }
+  static uint64_t key(long long i, long long j, long long k) {
+    return (uint64_t(i & 0x1FFFFF) << 42) | (uint64_t(j & 0x1FFFFF) << 21) | uint64_t(k & 0x1FFFFF);
   }
 
-  // B at (x, y, z) in three components; 0 = outside the domain, 1 = ok
-  int sample(const double* p, double* out, double* hp = nullptr) const {
-    const long long b = B.find(p[0], p[1], p[2]);
-    if (b < 0) return 0;
-    const double h = B.dx[b];
-    const double fi = (p[0] - B.x0[b]) / h, fj = (p[1] - B.y0[b]) / h, fk = (p[2] - B.z0[b]) / h;
-    const long long base = b * kBB;
-    if (fi >= 0 && fi <= kB - 1 && fj >= 0 && fj <= kB - 1 && fk >= 0 && fk <= kB - 1) {
-      const int i = std::min(int(fi), kB - 2), j = std::min(int(fj), kB - 2), k = std::min(int(fk), kB - 2);
-      const double wi = fi - i, wj = fj - j, wk = fk - k;
-      double v[4] = {0, 0, 0, 0};
-      for (int c = 0; c < 8; ++c) {
-        const int di = c & 1, dj = (c >> 1) & 1, dk = (c >> 2) & 1;
-        const double w = (di ? wi : 1 - wi) * (dj ? wj : 1 - wj) * (dk ? wk : 1 - wk);
-        const long long q = base + (i + di) * B.sx + (j + dj) * B.sy + (k + dk) * B.sz;
-        v[0] += w * m.bx[q]; v[1] += w * m.by[q]; v[2] += w * m.bz[q];
-        if (hp) v[3] += w * m.hplim[q];
-      }
-      out[0] = v[0]; out[1] = v[1]; out[2] = v[2];
-      if (hp) *hp = v[3];
-      return 1;
+  void box(std::size_t e, double* lo, double* hi) const {
+    const int32_t* nd = &m.conn[e * 8];
+    lo[0] = lo[1] = lo[2] = 1e300; hi[0] = hi[1] = hi[2] = -1e300;
+    for (int c = 0; c < 8; ++c) {
+      const double q[3] = {m.x[nd[c]], m.y[nd[c]], m.z[nd[c]]};
+      for (int d = 0; d < 3; ++d) { lo[d] = std::min(lo[d], q[d]); hi[d] = std::max(hi[d], q[d]); }
     }
-    // the outer half cell of the block: the bricks of the nearest centre
-    const int i = std::min(std::max(int(std::lround(fi)), 0), kB - 1), j = std::min(std::max(int(std::lround(fj)), 0), kB - 1),
-              k = std::min(std::max(int(std::lround(fk)), 0), kB - 1);
-    const long long q0 = base + i * B.sx + j * B.sy + k * B.sz;
-    for (int64_t a = adj_start[q0]; a < adj_end[q0]; ++a) {
-      const std::size_t e = std::size_t(adj[a]);
-      const int32_t* nd = &m.conn[e * 8];
-      double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
-      for (int c = 0; c < 8; ++c) {
-        const double q[3] = {m.x[nd[c]], m.y[nd[c]], m.z[nd[c]]};
-        for (int d = 0; d < 3; ++d) { lo[d] = std::min(lo[d], q[d]); hi[d] = std::max(hi[d], q[d]); }
+  }
+
+  explicit Field(const Mesh& mesh) : m(mesh) {
+    const std::size_t ne = std::size_t(m.nelem);
+    std::vector<float> size(ne);
+    smin = 1e300;
+    for (std::size_t e = 0; e < ne; ++e) {
+      double lo[3], hi[3];
+      box(e, lo, hi);
+      size[e] = float(std::max(hi[0] - lo[0], std::max(hi[1] - lo[1], hi[2] - lo[2])));
+      if (size[e] > 0) smin = std::min(smin, double(size[e]));
+      gx = std::min(gx, lo[0]); gy = std::min(gy, lo[1]); gz = std::min(gz, lo[2]);
+      ex = std::max(ex, hi[0]); ey = std::max(ey, hi[1]); ez = std::max(ez, hi[2]);
+    }
+    if (!(smin < 1e300)) throw std::runtime_error("all bricks are collapsed to points");
+    // size class of a brick: the nearest power of two times the smallest size
+    auto cls = [&](float s) { return int(std::lround(std::log2(double(s) / smin))); };
+    int ncls = 0;
+    for (std::size_t e = 0; e < ne; ++e) if (size[e] > 0) ncls = std::max(ncls, cls(size[e]) + 1);
+    levels.resize(ncls);
+    for (int c = 0; c < ncls; ++c) levels[c].size = smin * std::ldexp(1.0, c);
+    for (std::size_t e = 0; e < ne; ++e) {
+      if (!(size[e] > 0)) { ++empty; continue; }
+      Level& L = levels[cls(size[e])];
+      double lo[3], hi[3];
+      box(e, lo, hi);
+      const double eps = 1e-6 * L.size;
+      long long i0[3], i1[3];
+      const double g[3] = {gx, gy, gz};
+      for (int d = 0; d < 3; ++d) {
+        i0[d] = (long long)std::floor((lo[d] - g[d] + eps) / L.size);
+        i1[d] = (long long)std::floor((hi[d] - g[d] - eps) / L.size);
+        if (i1[d] < i0[d]) i1[d] = i0[d];
       }
-      const double tol = 1e-9 * (hi[0] - lo[0] + 1.0);
-      if (p[0] < lo[0] - tol || p[0] > hi[0] + tol || p[1] < lo[1] - tol || p[1] > hi[1] + tol || p[2] < lo[2] - tol ||
-          p[2] > hi[2] + tol)
-        continue;
-      // trilinear if the 8 nodes fill the 8 corners of the brick's box, else inverse-distance weights
-      int corner_of[8];
-      bool used[8] = {false, false, false, false, false, false, false, false}, full = true;
-      for (int c = 0; c < 8; ++c) {
-        const int32_t v = nd[c];
-        int cc = 0;
+      bool distinct = true;  // a collapsed brick repeats nodes
+      for (int c = 0; c < 8 && distinct; ++c)
+        for (int c2 = 0; c2 < c; ++c2) distinct &= m.conn[e * 8 + c] != m.conn[e * 8 + c2];
+      if (!distinct) ++collapsed;
+      for (long long i = i0[0]; i <= i1[0]; ++i)
+        for (long long j = i0[1]; j <= i1[1]; ++j)
+          for (long long k = i0[2]; k <= i1[2]; ++k) L.keys.push_back({key(i, j, k), int32_t(e)});
+    }
+    for (auto& L : levels) {
+      std::sort(L.keys.begin(), L.keys.end());
+      L.keys.shrink_to_fit();
+    }
+  }
+
+  bool holds(std::size_t e, const double* p, double* lo, double* hi) const {
+    box(e, lo, hi);
+    const double tol = 1e-7 * (hi[0] - lo[0] + hi[1] - lo[1] + hi[2] - lo[2] + 1e-30);
+    return p[0] >= lo[0] - tol && p[0] <= hi[0] + tol && p[1] >= lo[1] - tol && p[1] <= hi[1] + tol &&
+           p[2] >= lo[2] - tol && p[2] <= hi[2] + tol && hi[0] > lo[0] - 1e-30;
+  }
+
+  // the brick holding p, or -1; its box in lo, hi
+  long long find(const double* p, double* lo, double* hi) const {
+    static thread_local long long last = -1;
+    if (last >= 0 && holds(std::size_t(last), p, lo, hi)) return last;
+    const double g[3] = {gx, gy, gz};
+    for (const auto& L : levels) {
+      if (L.keys.empty()) continue;
+      long long ijk[3];
+      bool out = false;
+      for (int d = 0; d < 3; ++d) {
+        ijk[d] = (long long)std::floor((p[d] - g[d]) / L.size);
+        out |= ijk[d] < 0;
+      }
+      if (out) continue;
+      const uint64_t k = key(ijk[0], ijk[1], ijk[2]);
+      auto it = std::lower_bound(L.keys.begin(), L.keys.end(), std::make_pair(k, int32_t(-1)));
+      for (; it != L.keys.end() && it->first == k; ++it)
+        if (holds(std::size_t(it->second), p, lo, hi)) { last = it->second; return last; }
+    }
+    return -1;
+  }
+
+  // B (and Hplim) at p; false outside every brick. h: the size of the brick.
+  bool sample(const double* p, double* out, double* hp = nullptr, double* h = nullptr) const {
+    double lo[3], hi[3];
+    const long long e = find(p, lo, hi);
+    if (e < 0) return false;
+    const int32_t* nd = &m.conn[std::size_t(e) * 8];
+    if (h) *h = std::max(hi[0] - lo[0], std::max(hi[1] - lo[1], hi[2] - lo[2]));
+    int corner_of[8];
+    bool used[8] = {false, false, false, false, false, false, false, false}, full = true;
+    for (int c = 0; c < 8; ++c) {
+      int cc = 0;
+      const double q[3] = {m.x[nd[c]], m.y[nd[c]], m.z[nd[c]]};
+      for (int d = 0; d < 3; ++d) if (q[d] > 0.5 * (lo[d] + hi[d])) cc |= 1 << d;
+      if (used[cc]) full = false;
+      used[cc] = true;
+      corner_of[c] = cc;
+    }
+    double v[4] = {0, 0, 0, 0}, wsum = 0;
+    for (int c = 0; c < 8; ++c) {
+      const int32_t n = nd[c];
+      double w;
+      if (full) {  // trilinear in the brick's box
+        w = 1.0;
         for (int d = 0; d < 3; ++d) {
-          const double q = d == 0 ? m.x[v] : d == 1 ? m.y[v] : m.z[v];
-          if (q > 0.5 * (lo[d] + hi[d])) cc |= 1 << d;
+          const double span = hi[d] - lo[d], t = span > 0 ? (p[d] - lo[d]) / span : 0.5;
+          w *= (corner_of[c] >> d & 1) ? t : 1.0 - t;
         }
-        if (used[cc]) full = false;
-        used[cc] = true;
-        corner_of[c] = cc;
+      } else {     // collapsed brick: inverse-distance weights
+        const double dx = p[0] - m.x[n], dy = p[1] - m.y[n], dz = p[2] - m.z[n];
+        w = 1.0 / (dx * dx + dy * dy + dz * dz + 1e-12);
       }
-      double v[4] = {0, 0, 0, 0}, wsum = 0;
-      for (int c = 0; c < 8; ++c) {
-        const int32_t nn = nd[c];
-        double w;
-        if (full) {
-          const int cc = corner_of[c];
-          w = 1.0;
-          for (int d = 0; d < 3; ++d) {
-            const double span = hi[d] - lo[d], t = span > 0 ? (p[d] - lo[d]) / span : 0.5;
-            w *= (cc >> d & 1) ? t : 1 - t;
-          }
-        } else {
-          const double ddx = p[0] - m.x[nn], ddy = p[1] - m.y[nn], ddz = p[2] - m.z[nn];
-          w = 1.0 / (ddx * ddx + ddy * ddy + ddz * ddz + 1e-12);
-        }
-        v[0] += w * m.bx[nn]; v[1] += w * m.by[nn]; v[2] += w * m.bz[nn];
-        if (hp) v[3] += w * m.hplim[nn];
-        wsum += w;
-      }
-      out[0] = v[0] / wsum; out[1] = v[1] / wsum; out[2] = v[2] / wsum;
-      if (hp) *hp = v[3] / wsum;
-      return 1;
+      v[0] += w * m.bx[n]; v[1] += w * m.by[n]; v[2] += w * m.bz[n];
+      if (hp) v[3] += w * m.hplim[n];
+      wsum += w;
     }
-    out[0] = m.bx[q0]; out[1] = m.by[q0]; out[2] = m.bz[q0];  // no brick holds it: the nearest centre
-    if (hp) *hp = m.hplim[q0];
-    return 1;
+    if (!(wsum > 0)) return false;
+    out[0] = v[0] / wsum; out[1] = v[1] / wsum; out[2] = v[2] / wsum;
+    if (hp) *hp = v[3] / wsum;
+    return true;
   }
 
   double cell_size(const double* p) const {
-    const long long b = B.find(p[0], p[1], p[2]);
-    return b < 0 ? 0.0 : B.dx[b];
+    double b[3], h = 0;
+    return sample(p, b, nullptr, &h) ? h : 0.0;
   }
 };
 
@@ -551,16 +508,12 @@ int main(int argc, char** argv) {
 
     Mesh m = read_mesh(in, o.hplim_zmin >= 0);
     std::printf("%s: %lld nodes, %lld bricks; read in %.0f s\n", in.c_str(), m.npts, m.nelem, since(t0));
-    Blocks B;
-    B.build(m);
-    std::printf("  %lld blocks of 8 x 8 x 8 cells, %zu refinement levels (cells %.4g to %.4g AU); domain "
-                "x %.0f..%.0f, y %.0f..%.0f, z %.0f..%.0f AU\n",
-                B.n, B.levels.size(), B.levels.front().size / kB, B.levels.back().size / kB, B.gx, B.ex, B.gy, B.ey,
-                B.gz, B.ez);
     auto t1 = Clock::now();
-    Field F(m, B);
-    std::printf("  node-to-brick table built in %.0f s\n", since(t1));
-
+    Field F(m);
+    std::printf("  bricks indexed in %.0f s: %zu size classes (%.4g to %.4g AU), %lld collapsed, %lld empty; domain "
+                "x %.0f..%.0f, y %.0f..%.0f, z %.0f..%.0f AU\n",
+                since(t1), F.levels.size(), F.levels.front().size, F.levels.back().size, F.collapsed, F.empty, F.gx,
+                F.ex, F.gy, F.ey, F.gz, F.ez);
     std::vector<long long> seeds;
     long long inbox = 0;
     for (long long q = 0; q < m.npts; ++q)
