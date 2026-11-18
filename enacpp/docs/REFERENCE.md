@@ -293,6 +293,15 @@ For time-dependent runs, every MHD solution of a series has to become the four i
 - Tested on analytic fields: rings about the z axis (closed), a radial field (open), a vertical field (interstellar), and rings inside a vertical field (closed inside, interstellar outside, ISM-connected where vertical lines run into the rings).
 - Run time: lines that stay in the heliosphere run to `max_length`; on the full grid that is minutes on one Athena or Rome node.
 
+**`ena_fieldtopo_mhd MHD.plt OUT.plt [--seed-box XMIN XMAX YMIN YMAX ZMIN ZMAX] [--seed-stride N] [--points SEEDS.plt] [--z-top 500] [--z-bottom -500] [--hplim-ism ZMIN] [--r-sun 50] [--max-length 10000] [--cell-fraction 0.5] [--substeps 2] [--threads N]`**
+- The topology of `ena_fieldtopo`, on the original BATS-R-US grid: reads the MHD solution (`.plt`, one FEBRICK zone of cell centres written block by block, 8 x 8 x 8 cells per block; the layout is checked) and writes `OUT.plt` on the same grid (the same nodes and bricks) with X, Y, Z, topology, the end and path length of each direction and the path length to the ISM. `--points` also writes the seeds alone as scattered points (a small file).
+- B is interpolated trilinearly inside each block's lattice of cell centres and, in the outer half cell of a block, in the file's bricks (inverse-distance weights in collapsed bricks where refinement levels meet). Points are located through one lookup table per block size.
+- No region codes on this grid: the ISM is z >= z_top, z <= z_bottom, the domain edge or, with `--hplim-ism ZMIN`, Hplim < 0 where |z| >= ZMIN (the heliopause variable above that height). The step is `cell_fraction` of the local cell size.
+- Seeds: the nodes in `--seed-box` (default: the slab |y| <= 5 AU), every N-th with `--seed-stride N`; other nodes are -1 (not traced). Each seed is traced on its own; results do not depend on the thread count.
+- Memory: about 30 GB for a 224-million-cell solution (positions, B, connectivity and a node-to-brick table). Tested on BATS-R-US-like files with analytic fields (rings, radial, vertical, rings inside a vertical field), with the results of `ena_fieldtopo`.
+
+**`tools/plt_header.py FILE.plt`**: prints the layout of a Tecplot binary file (variables, zones, element type, sizes, data formats, sharing) from its header, and checks the file size; seconds even for files of many GB.
+
 **`ena_fixneutrals NEUTRAL.dat FIXED.plt [--threads N]`**
 - Step 1 of the single-ion input preparation (`configs/macros/single_ion/1_fix_neutrals.mcr`) without Tecplot: reads the neutral solution (Tecplot ASCII, one FEPOINT zone of bricks, 53 variables), computes the total and per-population neutral moments and temperatures, and writes the 33 variables of Tecplot's fixed-neutral file as a Tecplot binary file (version 112). Run by `tools/tecplot_prep.py` with `configs/prep_single_ion.toml` (step 1).
 - Results are the same for any thread count.

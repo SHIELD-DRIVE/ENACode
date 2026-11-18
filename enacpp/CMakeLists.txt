@@ -84,6 +84,11 @@ target_link_libraries(ena_trace PRIVATE ena)
 # file's B, to locate the heliopause where the region codes cannot (the low-latitude heliotail).
 add_executable(ena_fieldtopo apps/ena_fieldtopo.cpp)
 target_link_libraries(ena_fieldtopo PRIVATE ena)
+# The same on the original BATS-R-US grid, from the MHD .plt file (no ENA library needed).
+add_executable(ena_fieldtopo_mhd apps/ena_fieldtopo_mhd.cpp)
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(ena_fieldtopo_mhd PRIVATE OpenMP::OpenMP_CXX)
+endif()
 
 if(HDF5_FOUND)
   add_executable(ena_convert apps/ena_convert.cpp)
