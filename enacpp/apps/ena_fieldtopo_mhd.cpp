@@ -3,7 +3,7 @@
 // ena_fieldtopo (which works on the ENA grid), for checking it without interpolation.
 //
 //   ena_fieldtopo_mhd MHD.plt OUT.plt [--seed-box XMIN XMAX YMIN YMAX ZMIN ZMAX] [--seed-stride N]
-//                     [--points SEEDS.plt] [--z-top 500] [--z-bottom -500] [--hplim-ism ZMIN]
+//                     [--points SEEDS.plt] [--no-mhd-vars] [--z-top 500] [--z-bottom -500] [--hplim-ism ZMIN]
 //                     [--r-sun 50] [--max-length 10000] [--cell-fraction 0.5] [--substeps 2]
 //                     [--threads N]
 //
@@ -28,10 +28,11 @@
 // with --seed-stride N; the other nodes are "not traced" (-1). Each seed is traced on its own, so the
 // results do not depend on the thread count.
 //
-// Output: OUT.plt on the original grid (the same nodes and bricks): X, Y, Z, topology, the end of
-// each direction (1 Sun, 2 ISM z limit, 3 ISM Hplim, 4 ISM domain edge, 5 long, 6 null), the path
-// length of each direction and to the ISM (AU). With --points, also a small file of the seeds only
-// (a scattered-point zone with the same variables).
+// Output: OUT.plt on the original grid (the same nodes and bricks): all variables of the MHD file, in
+// its order (--no-mhd-vars: only X, Y, Z), then the topology, the end of each direction (1 Sun,
+// 2 ISM z limit, 3 ISM Hplim, 4 ISM domain edge, 5 long, 6 null), the path length of each direction
+// and to the ISM (AU). With --points, also a small file of the seeds only (a scattered-point zone
+// with the same variables).
 
 #include <algorithm>
 #include <chrono>
@@ -89,6 +90,16 @@ struct Mesh {
   long long npts = 0, nelem = 0;
   std::vector<float> x, y, z, bx, by, bz, hplim;  // per node
   std::vector<int32_t> conn;                      // 8 per brick, 0-based
+  std::vector<std::vector<float>> other;          // the other variables (with keep_all), in file order
+  std::vector<int> role;                          // per file variable: 0-6 = x, y, z, bx, by, bz, hplim; -1 other
+  // the file's variable v, as stored here (nullptr if it was not kept)
+  const std::vector<float>* var(int v) const {
+    const std::vector<float>* named[7] = {&x, &y, &z, &bx, &by, &bz, &hplim};
+    if (role[v] >= 0) return named[role[v]]->empty() ? nullptr : named[role[v]];
+    for (std::size_t k = 0, idx = 0; k < role.size(); ++k)
+      if (role[k] < 0) { if (int(k) == v) return idx < other.size() ? &other[idx] : nullptr; ++idx; }
+    return nullptr;
+  }
 };
 
 int find_var(const std::vector<std::string>& names, std::initializer_list<const char*> prefixes) {
@@ -101,7 +112,7 @@ int find_var(const std::vector<std::string>& names, std::initializer_list<const 
   return -1;
 }
 
-Mesh read_mesh(const std::string& path, bool want_hplim) {
+Mesh read_mesh(const std::string& path, bool want_hplim, bool keep_all) {
   PltFile in(path);
   char magic[8];
   in.read(magic, 8);
@@ -148,9 +159,13 @@ Mesh read_mesh(const std::string& path, bool want_hplim) {
     throw std::runtime_error(path + ": X, Y, Z, B_x, B_y and B_z are needed");
   if (want_hplim && ch < 0) throw std::runtime_error(path + ": --hplim-ism needs the variable Hplim");
   const std::size_t n = std::size_t(m.npts);
+  m.role.assign(nv, -1);
+  m.role[cx] = 0; m.role[cy] = 1; m.role[cz] = 2; m.role[cbx] = 3; m.role[cby] = 4; m.role[cbz] = 5;
+  if (ch >= 0) m.role[ch] = 6;
   for (int v = 0; v < nv; ++v) {
     std::vector<float>* dst = v == cx ? &m.x : v == cy ? &m.y : v == cz ? &m.z : v == cbx ? &m.bx
-                            : v == cby ? &m.by : v == cbz ? &m.bz : (want_hplim && v == ch) ? &m.hplim : nullptr;
+                            : v == cby ? &m.by : v == cbz ? &m.bz : ((want_hplim || keep_all) && v == ch) ? &m.hplim : nullptr;
+    if (!dst && keep_all) { m.other.emplace_back(); dst = &m.other.back(); }
     const std::size_t w = fmt[v] == 1 ? 4 : fmt[v] == 2 ? 8 : 0;
     if (!w) throw std::runtime_error(path + ": variable data must be float or double");
     if (!dst) { in.skip((long long)(n * w)); continue; }
@@ -466,6 +481,7 @@ int main(int argc, char** argv) {
   std::setvbuf(stdout, nullptr, _IOLBF, 0);
   try {
     std::string in, out, points;
+    bool keep_vars = true;
     Settings o;
     double box[6] = {-1e300, 1e300, -5.0, 5.0, -1e300, 1e300};
     long long stride = 1;
@@ -478,6 +494,7 @@ int main(int argc, char** argv) {
       if (k == "--seed-box") for (double& v : box) v = num();
       else if (k == "--seed-stride") stride = (long long)num();
       else if (k == "--points") { if (a + 1 >= argc) throw std::runtime_error("--points needs a file"); points = argv[++a]; }
+      else if (k == "--no-mhd-vars") keep_vars = false;
       else if (k == "--z-top") o.z_top = num();
       else if (k == "--z-bottom") o.z_bottom = num();
       else if (k == "--hplim-ism") o.hplim_zmin = num();
@@ -500,13 +517,13 @@ int main(int argc, char** argv) {
     }
     if (in.empty() || out.empty())
       throw std::runtime_error("usage: ena_fieldtopo_mhd MHD.plt OUT.plt [--seed-box X0 X1 Y0 Y1 Z0 Z1] [--seed-stride N] "
-                               "[--points SEEDS.plt] [--z-top 500] [--z-bottom -500] [--hplim-ism ZMIN] [--r-sun 50] "
+                               "[--points SEEDS.plt] [--no-mhd-vars] [--z-top 500] [--z-bottom -500] [--hplim-ism ZMIN] [--r-sun 50] "
                                "[--max-length 10000] [--cell-fraction 0.5] [--substeps 2] [--threads N]");
     if (stride < 1 || !(o.cell_fraction > 0) || o.substeps < 1 || !(o.z_top > o.z_bottom))
       throw std::runtime_error("need --seed-stride >= 1, cell_fraction > 0, substeps >= 1, z_top > z_bottom");
     const auto t0 = Clock::now();
 
-    Mesh m = read_mesh(in, o.hplim_zmin >= 0);
+    Mesh m = read_mesh(in, o.hplim_zmin >= 0, keep_vars);
     std::printf("%s: %lld nodes, %lld bricks; read in %.0f s\n", in.c_str(), m.npts, m.nelem, since(t0));
     auto t1 = Clock::now();
     Field F(m);
@@ -562,20 +579,29 @@ int main(int argc, char** argv) {
       if (is_ism(eb[s]) && (li < 0 || lb[s] < li)) li = lb[s];
       LI[q] = float(li);
     }
-    const std::vector<std::string> names = {"X AU", "Y AU", "Z AU", "topology", "end along B", "end against B",
-                                            "length along B AU", "length against B AU", "length to ISM AU"};
+    // the variables written: the MHD file's (all, in its order; with --no-mhd-vars only X, Y, Z), then the topology
+    std::vector<std::string> names;
+    std::vector<const std::vector<float>*> cols;
+    for (int v = 0; v < int(m.names.size()); ++v)
+      if (const std::vector<float>* c = m.var(v))
+        if (keep_vars || m.role[v] <= 2) { names.push_back(m.names[v]); cols.push_back(c); }
+    const std::vector<std::string> tnames = {"topology", "end along B", "end against B", "length along B AU",
+                                             "length against B AU", "length to ISM AU"};
+    const std::vector<const std::vector<float>*> tcols = {&T, &EF, &EB, &LF, &LB, &LI};
+    names.insert(names.end(), tnames.begin(), tnames.end());
+    cols.insert(cols.end(), tcols.begin(), tcols.end());
     t1 = Clock::now();
-    write_plt(out, "field-line topology of " + in, names, {&m.x, &m.y, &m.z, &T, &EF, &EB, &LF, &LB, &LI}, &m.conn);
-    std::printf("  wrote %s (the original grid) in %.0f s\n", out.c_str(), since(t1));
+    write_plt(out, "field-line topology of " + in, names, cols, &m.conn);
+    std::printf("  wrote %s (the original grid, %zu variables) in %.0f s\n", out.c_str(), names.size(), since(t1));
     if (!points.empty()) {
-      std::vector<float> px(ns), py(ns), pz(ns), pt(ns), pef(ns), peb(ns), plf(ns), plb(ns), pli(ns);
+      std::vector<std::vector<float>> pv(cols.size(), std::vector<float>(ns));
       for (std::size_t s = 0; s < ns; ++s) {
         const std::size_t q = std::size_t(seeds[s]);
-        px[s] = m.x[q]; py[s] = m.y[q]; pz[s] = m.z[q];
-        pt[s] = T[q]; pef[s] = EF[q]; peb[s] = EB[q]; plf[s] = LF[q]; plb[s] = LB[q]; pli[s] = LI[q];
+        for (std::size_t c = 0; c < cols.size(); ++c) pv[c][s] = (*cols[c])[q];
       }
-      write_plt(points, "field-line topology of the seeds of " + in, names,
-                {&px, &py, &pz, &pt, &pef, &peb, &plf, &plb, &pli}, nullptr);
+      std::vector<const std::vector<float>*> pcols;
+      for (auto& v : pv) pcols.push_back(&v);
+      write_plt(points, "field-line topology of the seeds of " + in, names, pcols, nullptr);
       std::printf("  wrote %s (the %zu seeds as scattered points)\n", points.c_str(), ns);
     }
     std::printf("  %.0f s in total\n", since(t0));
