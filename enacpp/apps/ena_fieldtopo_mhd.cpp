@@ -3,7 +3,7 @@
 // ena_fieldtopo (which works on the ENA grid), for checking it without interpolation.
 //
 //   ena_fieldtopo_mhd MHD.plt OUT.plt [--seed-box XMIN XMAX YMIN YMAX ZMIN ZMAX] [--seed-stride N]
-//                     [--points SEEDS.plt] [--no-mhd-vars] [--z-top 500] [--z-bottom -500] [--hplim-ism ZMIN]
+//                     [--points SEEDS.plt] [--no-mhd-vars] [--no-propagate] [--boundary-passes 4] [--z-top 500] [--z-bottom -500] [--hplim-ism ZMIN]
 //                     [--r-sun 50] [--max-length 10000] [--cell-fraction 0.5] [--substeps 2]
 //                     [--threads N]
 //
@@ -24,15 +24,26 @@
 // collapsed brick by inverse-distance weights. A point in no brick is outside the domain. The step
 // is cell_fraction of the size of the brick.
 //
-// Seeds: the nodes inside --seed-box (default: a slab |y| <= 5 AU around y = 0), every N-th of them
-// with --seed-stride N; the other nodes are "not traced" (-1). Each seed is traced on its own, so the
-// results do not depend on the thread count.
+// Which nodes are classified: all nodes inside --seed-box (default: the whole domain). A field line
+// has one topology along its whole length, so each traced line also labels the nodes it passes (the
+// nearest node at every step; not nodes that meet an end condition themselves). Tracing goes in
+// rounds: every 4096-th node, then every 512-th, 64-th and 8-th of the nodes still unlabelled, then
+// all nodes still left. The seeds of a round are fixed before it starts, and a node passed by several
+// lines of a round takes the line of the lowest seed, so the result does not depend on the thread
+// count. Near a boundary between classes a passing line can be up to half a cell from the node, so the
+// boundary would be sharp only to about a cell; so, afterwards, every node labelled by a passing line
+// that shares a brick with a node of another class is traced on its own, then the nodes around those
+// that changed, until none change (--boundary-passes N, default 4; 0: none). The boundaries are then
+// as exact as tracing every node. --no-propagate traces every seed on its own and labels only it
+// (with --seed-stride N, every N-th node of the box); the other nodes are -1 (not labelled).
 //
 // Output: OUT.plt on the original grid (the same nodes and bricks): all variables of the MHD file, in
 // its order (--no-mhd-vars: only X, Y, Z), then the topology, the end of each direction (1 Sun,
 // 2 ISM z limit, 3 ISM Hplim, 4 ISM domain edge, 5 long, 6 null), the path length of each direction
-// and to the ISM (AU). With --points, also a small file of the seeds only (a scattered-point zone
-// with the same variables).
+// and to the ISM (AU; for nodes traced themselves, else -1), and the label source (1 traced from the
+// node in a round, 2 labelled by a line passing through it, 3 traced from the node in a boundary pass,
+// 0 not labelled). With --points, also a small file of
+// the nodes traced themselves (a scattered-point zone with the same variables).
 
 #include <algorithm>
 #include <chrono>
@@ -209,6 +220,7 @@ struct Field {
   double smin = 0;  // the smallest brick size
   struct Level { double size; std::vector<std::pair<uint64_t, int32_t>> keys; };
   std::vector<Level> levels;
+  std::vector<bool> is_collapsed;  // per brick
   long long collapsed = 0, empty = 0;
 
   static uint64_t key(long long i, long long j, long long k) {
@@ -242,6 +254,7 @@ struct Field {
     int ncls = 0;
     for (std::size_t e = 0; e < ne; ++e) if (size[e] > 0) ncls = std::max(ncls, cls(size[e]) + 1);
     levels.resize(ncls);
+    is_collapsed.assign(ne, false);
     for (int c = 0; c < ncls; ++c) levels[c].size = smin * std::ldexp(1.0, c);
     for (std::size_t e = 0; e < ne; ++e) {
       if (!(size[e] > 0)) { ++empty; continue; }
@@ -259,7 +272,7 @@ struct Field {
       bool distinct = true;  // a collapsed brick repeats nodes
       for (int c = 0; c < 8 && distinct; ++c)
         for (int c2 = 0; c2 < c; ++c2) distinct &= m.conn[e * 8 + c] != m.conn[e * 8 + c2];
-      if (!distinct) ++collapsed;
+      if (!distinct) { ++collapsed; is_collapsed[e] = true; }
       for (long long i = i0[0]; i <= i1[0]; ++i)
         for (long long j = i0[1]; j <= i1[1]; ++j)
           for (long long k = i0[2]; k <= i1[2]; ++k) L.keys.push_back({key(i, j, k), int32_t(e)});
@@ -277,10 +290,21 @@ struct Field {
            p[2] >= lo[2] - tol && p[2] <= hi[2] + tol && hi[0] > lo[0] - 1e-30;
   }
 
-  // the brick holding p, or -1; its box in lo, hi
+  // the brick holding p, or -1; its box in lo, hi. The choice does not depend on earlier queries: the
+  // first holding brick in a fixed order (finest size class first, then by brick number). The previous
+  // brick of the thread is reused only where it is the only possible answer: p strictly inside a brick
+  // that is not collapsed (regular bricks touch only at faces).
   long long find(const double* p, double* lo, double* hi) const {
     static thread_local long long last = -1;
-    if (last >= 0 && holds(std::size_t(last), p, lo, hi)) return last;
+    if (last >= 0 && !is_collapsed[std::size_t(last)]) {
+      box(std::size_t(last), lo, hi);
+      bool inside = true;
+      for (int d = 0; d < 3; ++d) {
+        const double margin = 1e-6 * (hi[d] - lo[d]);
+        inside &= p[d] > lo[d] + margin && p[d] < hi[d] - margin;
+      }
+      if (inside) return last;
+    }
     const double g[3] = {gx, gy, gz};
     for (const auto& L : levels) {
       if (L.keys.empty()) continue;
@@ -344,6 +368,22 @@ struct Field {
     double b[3], h = 0;
     return sample(p, b, nullptr, &h) ? h : 0.0;
   }
+
+  // the node nearest to p among the corners of the brick holding p, or -1
+  long long nearest_node(const double* p) const {
+    double lo[3], hi[3];
+    const long long e = find(p, lo, hi);
+    if (e < 0) return -1;
+    const int32_t* nd = &m.conn[std::size_t(e) * 8];
+    long long best = nd[0];
+    double bd = 1e300;
+    for (int c = 0; c < 8; ++c) {
+      const double dx = p[0] - m.x[nd[c]], dy = p[1] - m.y[nd[c]], dz = p[2] - m.z[nd[c]];
+      const double d = dx * dx + dy * dy + dz * dz;
+      if (d < bd || (d == bd && nd[c] < best)) { bd = d; best = nd[c]; }
+    }
+    return best;
+  }
 };
 
 struct Tracer {
@@ -370,8 +410,20 @@ struct Tracer {
     return 0;
   }
 
-  std::pair<int, double> follow(const double* x0, double sign) const {
+  // follow the line from x0 (sign +1 along B, -1 against); with `visited`, the nearest node of every
+  // step is recorded (consecutive repeats once)
+  std::pair<int, double> follow(const double* x0, double sign, std::vector<int32_t>* visited = nullptr) const {
     double x[3] = {x0[0], x0[1], x0[2]};
+    auto mark = [&](const double* p) {
+      if (!visited) return;
+      const long long q = F.nearest_node(p);
+      if (q < 0 || (!visited->empty() && visited->back() == q)) return;
+      // a node that meets an end condition itself (e.g. beyond the z limits) is not labelled by the line:
+      // traced itself, it ends at once
+      const double nq[3] = {F.m.x[q], F.m.y[q], F.m.z[q]};
+      if (stop_at(nq)) return;
+      visited->push_back(int32_t(q));
+    };
     if (int e = stop_at(x)) return {e, 0.0};
     double length = 0.0;
     while (length < o.max_length) {
@@ -397,6 +449,7 @@ struct Tracer {
         length += std::fabs(h);
       }
       x[0] = y[0]; x[1] = y[1]; x[2] = y[2];
+      mark(x);
       if (F.cell_size(x) <= 0) {
         const double r = std::sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
         return {r <= 2.0 * o.r_sun ? kSun : kIsmEdge, length};
@@ -481,9 +534,10 @@ int main(int argc, char** argv) {
   std::setvbuf(stdout, nullptr, _IOLBF, 0);
   try {
     std::string in, out, points;
-    bool keep_vars = true;
+    bool keep_vars = true, propagate = true;
+    int refine = 4;  // passes over the boundaries between classes
     Settings o;
-    double box[6] = {-1e300, 1e300, -5.0, 5.0, -1e300, 1e300};
+    double box[6] = {-1e300, 1e300, -1e300, 1e300, -1e300, 1e300};
     long long stride = 1;
     for (int a = 1; a < argc; ++a) {
       const std::string k = argv[a];
@@ -495,6 +549,8 @@ int main(int argc, char** argv) {
       else if (k == "--seed-stride") stride = (long long)num();
       else if (k == "--points") { if (a + 1 >= argc) throw std::runtime_error("--points needs a file"); points = argv[++a]; }
       else if (k == "--no-mhd-vars") keep_vars = false;
+      else if (k == "--no-propagate") propagate = false;
+      else if (k == "--boundary-passes") refine = int(num());
       else if (k == "--z-top") o.z_top = num();
       else if (k == "--z-bottom") o.z_bottom = num();
       else if (k == "--hplim-ism") o.hplim_zmin = num();
@@ -517,7 +573,7 @@ int main(int argc, char** argv) {
     }
     if (in.empty() || out.empty())
       throw std::runtime_error("usage: ena_fieldtopo_mhd MHD.plt OUT.plt [--seed-box X0 X1 Y0 Y1 Z0 Z1] [--seed-stride N] "
-                               "[--points SEEDS.plt] [--no-mhd-vars] [--z-top 500] [--z-bottom -500] [--hplim-ism ZMIN] [--r-sun 50] "
+                               "[--points SEEDS.plt] [--no-mhd-vars] [--no-propagate] [--boundary-passes 4] [--z-top 500] [--z-bottom -500] [--hplim-ism ZMIN] [--r-sun 50] "
                                "[--max-length 10000] [--cell-fraction 0.5] [--substeps 2] [--threads N]");
     if (stride < 1 || !(o.cell_fraction > 0) || o.substeps < 1 || !(o.z_top > o.z_bottom))
       throw std::runtime_error("need --seed-stride >= 1, cell_fraction > 0, substeps >= 1, z_top > z_bottom");
@@ -531,54 +587,166 @@ int main(int argc, char** argv) {
                 "x %.0f..%.0f, y %.0f..%.0f, z %.0f..%.0f AU\n",
                 since(t1), F.levels.size(), F.levels.front().size, F.levels.back().size, F.collapsed, F.empty, F.gx,
                 F.ex, F.gy, F.ey, F.gz, F.ez);
-    std::vector<long long> seeds;
+    auto in_box = [&](long long q) {
+      return m.x[q] >= box[0] && m.x[q] <= box[1] && m.y[q] >= box[2] && m.y[q] <= box[3] && m.z[q] >= box[4] &&
+             m.z[q] <= box[5];
+    };
     long long inbox = 0;
-    for (long long q = 0; q < m.npts; ++q)
-      if (m.x[q] >= box[0] && m.x[q] <= box[1] && m.y[q] >= box[2] && m.y[q] <= box[3] && m.z[q] >= box[4] &&
-          m.z[q] <= box[5])
-        if (inbox++ % stride == 0) seeds.push_back(q);
-    std::printf("  seeds: %zu nodes (%lld in the box, every %lld-th); ISM: z >= %g or z <= %g AU, the domain edge%s; "
-                "Sun: r <= %g AU; at most %g AU per direction, step %g cell, %d substeps\n",
-                seeds.size(), inbox, stride, o.z_top, o.z_bottom,
+    for (long long q = 0; q < m.npts; ++q) inbox += in_box(q);
+    std::printf("  %lld nodes in the seed box; %s; ISM: z >= %g or z <= %g AU, the domain edge%s; Sun: r <= %g AU; "
+                "at most %g AU per direction, step %g cell, %d substeps\n",
+                inbox, propagate ? "each traced line labels the nodes it passes" : "each seed labels only itself",
+                o.z_top, o.z_bottom,
                 o.hplim_zmin >= 0 ? (", Hplim < 0 at |z| >= " + std::to_string(o.hplim_zmin) + " AU").c_str() : "",
                 o.r_sun, o.max_length, o.cell_fraction, o.substeps);
 
-    const std::size_t ns = seeds.size();
-    std::vector<int> topo(ns), ef(ns), eb(ns);
-    std::vector<double> lf(ns), lb(ns);
+    // per node: topology (-1 not labelled), the ends of its line, how it was labelled (1 traced from the
+    // node, 2 by a line passing through it); path lengths only for nodes traced themselves
+    const std::size_t n = std::size_t(m.npts);
+    std::vector<int8_t> label(n, -1), endf(n, 0), endb(n, 0), source(n, 0);
+    std::vector<float> LF(n, -1.0f), LB(n, -1.0f), LI(n, -1.0f);
+    std::vector<uint32_t> claim(propagate ? n : 0, UINT32_MAX);
     Tracer tr{F, o};
+    // rounds: each traces the not yet labelled nodes of the box whose index is a multiple of its stride;
+    // the seeds of a round are fixed before it starts, and a node passed by several lines takes the line of
+    // the lowest seed, so the result does not depend on the thread count
+    std::vector<long long> strides;
+    if (propagate) strides = {4096, 512, 64, 8, 1};
+    else strides = {stride};
     t1 = Clock::now();
-    long long done = 0;
-#pragma omp parallel for schedule(dynamic, 16)
-    for (long long s = 0; s < (long long)ns; ++s) {
-      const long long q = seeds[s];
-      const double x[3] = {m.x[q], m.y[q], m.z[q]};
-      const auto f = tr.follow(x, +1.0), b = tr.follow(x, -1.0);
-      ef[s] = f.first; lf[s] = f.second; eb[s] = b.first; lb[s] = b.second;
-      topo[s] = classify(f.first, b.first);
-      long long d;
+    for (long long st : strides) {
+      std::vector<long long> seeds;
+      if (propagate) {
+        for (long long q = 0; q < m.npts; q += st)
+          if (label[q] < 0 && in_box(q)) seeds.push_back(q);
+      } else {
+        long long kk = 0;
+        for (long long q = 0; q < m.npts; ++q)
+          if (in_box(q) && kk++ % st == 0) seeds.push_back(q);
+      }
+      const std::size_t ns = seeds.size();
+      if (!ns) continue;
+      std::vector<int8_t> topo(ns), ef(ns), eb(ns);
+      std::vector<float> lf(ns), lb(ns);
+      const auto tr0 = Clock::now();
+      long long done = 0;
+#pragma omp parallel
+      {
+        std::vector<int32_t> visited;
+#pragma omp for schedule(dynamic, 16)
+        for (long long sidx = 0; sidx < (long long)ns; ++sidx) {
+          const long long q = seeds[sidx];
+          const double x[3] = {m.x[q], m.y[q], m.z[q]};
+          visited.clear();
+          const auto f = tr.follow(x, +1.0, propagate ? &visited : nullptr);
+          const auto b = tr.follow(x, -1.0, propagate ? &visited : nullptr);
+          ef[sidx] = int8_t(f.first); lf[sidx] = float(f.second); eb[sidx] = int8_t(b.first); lb[sidx] = float(b.second);
+          topo[sidx] = int8_t(classify(f.first, b.first));
+          for (int32_t v : visited) {  // claim the passed nodes: the lowest seed wins
+            uint32_t cur = __atomic_load_n(&claim[std::size_t(v)], __ATOMIC_RELAXED);
+            while (uint32_t(sidx) < cur &&
+                   !__atomic_compare_exchange_n(&claim[std::size_t(v)], &cur, uint32_t(sidx), true, __ATOMIC_RELAXED,
+                                                __ATOMIC_RELAXED)) {
+            }
+          }
+          long long d;
 #pragma omp atomic capture
-      d = ++done;
-      if (d % 100000 == 0) std::printf("    %lld of %zu seeds traced (%.0f s)\n", d, ns, since(t1));
+          d = ++done;
+          if (d % 100000 == 0) std::printf("    %lld of %zu seeds of this round traced (%.0f s)\n", d, ns, since(tr0));
+        }
+      }
+      // the seeds themselves, then the nodes their lines passed
+      for (std::size_t sidx = 0; sidx < ns; ++sidx) {
+        const std::size_t q = std::size_t(seeds[sidx]);
+        label[q] = topo[sidx]; endf[q] = ef[sidx]; endb[q] = eb[sidx]; source[q] = 1;
+        LF[q] = lf[sidx]; LB[q] = lb[sidx];
+        double li = -1;
+        if (is_ism(ef[sidx])) li = lf[sidx];
+        if (is_ism(eb[sidx]) && (li < 0 || lb[sidx] < li)) li = lb[sidx];
+        LI[q] = float(li);
+      }
+      long long passed = 0;
+      if (propagate) {
+#pragma omp parallel for reduction(+ : passed) schedule(static)
+        for (long long q = 0; q < (long long)n; ++q) {
+          const uint32_t c = claim[std::size_t(q)];
+          if (c == UINT32_MAX) continue;
+          claim[std::size_t(q)] = UINT32_MAX;
+          if (label[q] >= 0) continue;
+          label[q] = topo[c]; endf[q] = ef[c]; endb[q] = eb[c]; source[q] = 2;
+          ++passed;
+        }
+      }
+      long long labelled = 0;
+      for (std::size_t q = 0; q < n; ++q) labelled += label[q] >= 0;
+      std::printf("  round (every %lld-th node): %zu seeds traced in %.0f s, %lld more nodes labelled by their lines; "
+                  "%lld of %lld nodes labelled (%.1f%%)\n",
+                  st, ns, since(tr0), passed, labelled, (long long)n, 100.0 * labelled / n);
     }
-    long long count[6] = {0, 0, 0, 0, 0, 0};
-    for (int t : topo) ++count[t + 1];
-    const char* cname[6] = {"not traced", "undetermined", "closed", "open", "interstellar", "ISM-connected"};
-    std::printf("  traced in %.0f s; seeds by topology:\n", since(t1));
-    for (int t = 1; t < 6; ++t)
+    // boundary passes: a node labelled by a passing line that shares a brick with a node of another class is
+    // traced on its own; then the same for the bricks around the nodes that changed, until none change (at
+    // most `refine` passes). Away from the boundaries every line agrees, so the labels there stay.
+    if (propagate && refine > 0) {
+      const std::size_t ne = std::size_t(m.nelem);
+      std::vector<uint8_t> changed(n, 1), cand(n, 0);  // pass 1: every brick is checked
+      for (int pass = 1; pass <= refine; ++pass) {
+        std::fill(cand.begin(), cand.end(), 0);
+#pragma omp parallel for schedule(static)
+        for (long long e = 0; e < (long long)ne; ++e) {
+          const int32_t* nd = &m.conn[std::size_t(e) * 8];
+          bool touched = false, mixed = false;
+          for (int c = 0; c < 8; ++c) {
+            touched |= changed[nd[c]] != 0;
+            mixed |= label[nd[c]] != label[nd[0]];
+          }
+          if (!touched || !mixed) continue;
+          for (int c = 0; c < 8; ++c)
+            if (source[nd[c]] == 2) cand[nd[c]] = 1;  // benign race: every writer stores 1
+        }
+        std::vector<long long> seeds;
+        for (std::size_t q = 0; q < n; ++q) if (cand[q] && in_box((long long)q)) seeds.push_back((long long)q);
+        if (seeds.empty()) break;
+        const auto tp0 = Clock::now();
+        std::vector<int8_t> topo(seeds.size()), ef(seeds.size()), eb(seeds.size());
+        std::vector<float> lf(seeds.size()), lb(seeds.size());
+#pragma omp parallel for schedule(dynamic, 16)
+        for (long long sidx = 0; sidx < (long long)seeds.size(); ++sidx) {
+          const long long q = seeds[sidx];
+          const double x[3] = {m.x[q], m.y[q], m.z[q]};
+          const auto f = tr.follow(x, +1.0), b = tr.follow(x, -1.0);
+          ef[sidx] = int8_t(f.first); lf[sidx] = float(f.second); eb[sidx] = int8_t(b.first); lb[sidx] = float(b.second);
+          topo[sidx] = int8_t(classify(f.first, b.first));
+        }
+        std::fill(changed.begin(), changed.end(), 0);
+        long long nchanged = 0;
+        for (std::size_t sidx = 0; sidx < seeds.size(); ++sidx) {
+          const std::size_t q = std::size_t(seeds[sidx]);
+          if (label[q] != topo[sidx]) { changed[q] = 1; ++nchanged; }
+          label[q] = topo[sidx]; endf[q] = ef[sidx]; endb[q] = eb[sidx]; source[q] = 3;
+          LF[q] = lf[sidx]; LB[q] = lb[sidx];
+          double li = -1;
+          if (is_ism(ef[sidx])) li = lf[sidx];
+          if (is_ism(eb[sidx]) && (li < 0 || lb[sidx] < li)) li = lb[sidx];
+          LI[q] = float(li);
+        }
+        std::printf("  boundary pass %d: %zu nodes next to another class traced on their own in %.0f s; %lld changed\n",
+                    pass, seeds.size(), since(tp0), nchanged);
+        if (nchanged == 0) break;
+      }
+    }
+    long long count[6] = {0, 0, 0, 0, 0, 0}, own = 0;
+    for (std::size_t q = 0; q < n; ++q) { ++count[label[q] + 1]; own += source[q] == 1 || source[q] == 3; }
+    const char* cname[6] = {"not labelled", "undetermined", "closed", "open", "interstellar", "ISM-connected"};
+    std::printf("  done in %.0f s (%lld nodes traced themselves); nodes by topology:\n", since(t1), own);
+    for (int t = 0; t < 6; ++t)
       if (count[t]) std::printf("    %-14s %12lld\n", cname[t], count[t]);
 
     // ---- output on the original grid ----
-    const std::size_t n = std::size_t(m.npts);
-    std::vector<float> T(n, -1.0f), EF(n, 0.0f), EB(n, 0.0f), LF(n, 0.0f), LB(n, 0.0f), LI(n, -1.0f);
-    for (std::size_t s = 0; s < ns; ++s) {
-      const std::size_t q = std::size_t(seeds[s]);
-      T[q] = float(topo[s]); EF[q] = float(ef[s]); EB[q] = float(eb[s]); LF[q] = float(lf[s]); LB[q] = float(lb[s]);
-      double li = -1;
-      if (is_ism(ef[s])) li = lf[s];
-      if (is_ism(eb[s]) && (li < 0 || lb[s] < li)) li = lb[s];
-      LI[q] = float(li);
-    }
+    std::vector<float> T(n), EF(n), EB(n), SRC(n);
+    for (std::size_t q = 0; q < n; ++q) { T[q] = label[q]; EF[q] = endf[q]; EB[q] = endb[q]; SRC[q] = source[q]; }
+    std::vector<long long> seeds;  // the nodes traced themselves, for --points
+    for (std::size_t q = 0; q < n; ++q) if (source[q] == 1 || source[q] == 3) seeds.push_back((long long)q);
+    const std::size_t ns = seeds.size();
     // the variables written: the MHD file's (all, in its order; with --no-mhd-vars only X, Y, Z), then the topology
     std::vector<std::string> names;
     std::vector<const std::vector<float>*> cols;
@@ -586,8 +754,8 @@ int main(int argc, char** argv) {
       if (const std::vector<float>* c = m.var(v))
         if (keep_vars || m.role[v] <= 2) { names.push_back(m.names[v]); cols.push_back(c); }
     const std::vector<std::string> tnames = {"topology", "end along B", "end against B", "length along B AU",
-                                             "length against B AU", "length to ISM AU"};
-    const std::vector<const std::vector<float>*> tcols = {&T, &EF, &EB, &LF, &LB, &LI};
+                                             "length against B AU", "length to ISM AU", "label source"};
+    const std::vector<const std::vector<float>*> tcols = {&T, &EF, &EB, &LF, &LB, &LI, &SRC};
     names.insert(names.end(), tnames.begin(), tnames.end());
     cols.insert(cols.end(), tcols.begin(), tcols.end());
     t1 = Clock::now();
