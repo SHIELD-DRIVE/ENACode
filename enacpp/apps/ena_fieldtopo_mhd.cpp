@@ -707,8 +707,13 @@ int main(int argc, char** argv) {
         for (std::size_t q = 0; q < n; ++q) if (cand[q] && in_box((long long)q)) seeds.push_back((long long)q);
         if (seeds.empty()) break;
         const auto tp0 = Clock::now();
+        // announce the pass before tracing: near a tangled boundary many of these lines are long, so a pass
+        // can take much longer than a round with the same number of seeds
+        std::printf("  boundary pass %d: %zu nodes next to another class to trace on their own\n", pass, seeds.size());
+        std::fflush(stdout);
         std::vector<int8_t> topo(seeds.size()), ef(seeds.size()), eb(seeds.size());
         std::vector<float> lf(seeds.size()), lb(seeds.size());
+        long long pdone = 0;
 #pragma omp parallel for schedule(dynamic, 16)
         for (long long sidx = 0; sidx < (long long)seeds.size(); ++sidx) {
           const long long q = seeds[sidx];
@@ -716,6 +721,13 @@ int main(int argc, char** argv) {
           const auto f = tr.follow(x, +1.0), b = tr.follow(x, -1.0);
           ef[sidx] = int8_t(f.first); lf[sidx] = float(f.second); eb[sidx] = int8_t(b.first); lb[sidx] = float(b.second);
           topo[sidx] = int8_t(classify(f.first, b.first));
+          long long d;
+#pragma omp atomic capture
+          d = ++pdone;
+          if (d % 100000 == 0) {
+            std::printf("    %lld of %zu nodes of this pass traced (%.0f s)\n", d, seeds.size(), since(tp0));
+            std::fflush(stdout);
+          }
         }
         std::fill(changed.begin(), changed.end(), 0);
         long long nchanged = 0;
@@ -731,6 +743,7 @@ int main(int argc, char** argv) {
         }
         std::printf("  boundary pass %d: %zu nodes next to another class traced on their own in %.0f s; %lld changed\n",
                     pass, seeds.size(), since(tp0), nchanged);
+        std::fflush(stdout);
         if (nchanged == 0) break;
       }
     }

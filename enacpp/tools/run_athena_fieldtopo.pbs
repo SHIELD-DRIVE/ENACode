@@ -1,0 +1,40 @@
+#!/bin/csh
+# Heliopause from the magnetic field-line topology, for every snapshot of a time-dependent series,
+# on NASA HECC Athena (PBS). Runs ena_fieldtopo --rewrite-boundaries: for each snapshot, the
+# heliosheath cells (regions 3 and 6) whose field line is not closed become region 2 in a copy of
+# the boundaries file, named with _topo before the extension (boundaries_040.txt ->
+# boundaries_040_topo.txt, next to the original). The originals are not changed.
+#
+# Afterwards, point the run at the copies, in [time_dependent.files] of the run configuration:
+#   boundaries = "time_series/boundaries_{index:03}_topo.txt"
+#
+# Without --overwrite (below), a copy that exists already is skipped, so a stopped job can be resubmitted.
+# Needs ena_fieldtopo built (cmake --build enacpp/build_nompi --target ena_fieldtopo).
+#
+# Submit from the top directory (the one holding enacpp/):   qsub enacpp/tools/run_athena_fieldtopo.pbs
+#
+#PBS -N ena_fieldtopo
+#PBS -q normal
+#PBS -l select=1:ncpus=256:model=tur_ath
+#PBS -l walltime=08:00:00
+#PBS -j oe
+#PBS -W group_list=s8440
+# Notes on the lines above (PBS allows no comment after a directive on its line):
+#   walltime: the log gives the time per snapshot after the first one; resubmit if it runs out.
+
+cd $PBS_O_WORKDIR
+
+module swap PrgEnv-intel PrgEnv-gnu
+module load cray-hdf5
+
+# CHECK: the run configuration of the series, and the snapshots (all, A-B, or A,B,C; from 0)
+set CONFIG = enacpp/configs/my_td_run.toml
+set SNAPSHOTS = all
+
+# --ism-regions none: the ISM is reached only at |z| >= 500 AU or the grid edge, so the topology does
+# not depend on the region codes it changes
+# --edge-ism nose: leaving through the grid edge counts as the ISM only on the nose side (x < 0); down
+# the tail a line can leave the grid while still in the heliotail
+# --overwrite: copies made earlier (e.g. without --edge-ism nose) are written again; drop it to resume
+# a stopped job
+enacpp/build_nompi/ena_fieldtopo $CONFIG --snapshots $SNAPSHOTS --rewrite-boundaries --ism-regions none --edge-ism nose --overwrite --threads 256 >& ena_fieldtopo_$PBS_JOBID.log
