@@ -392,6 +392,7 @@ python3 enacpp/tools/ena_plot.py OUT/flux_band*.h5 --config enacpp/configs/plot_
 |---|---|
 | `--view nose` / `tail` / `ecliptic` | centre on upwind (default), downwind, or ecliptic (0°, 0°) |
 | `--scale S` | multiply the flux by S; the title shows "(Flux x S)" |
+| `--normalize` | divide each map by its own maximum; colour range 0–1 (see below) |
 | `--vmin A --vmax B` | colour-bar range (default: per-band limits, else the map's own range) |
 | `--legend-style integer` / `float` / `exponent` | colour-bar number format |
 | `--component accelerated` | plot one component (default `total`) |
@@ -408,9 +409,12 @@ python3 enacpp/tools/ena_plot.py OUT/flux_band*.h5 --config enacpp/configs/plot_
 ```
 python3 enacpp/tools/ena_plot.py OUT/flux_band*_*.h5 --movie --out maps
 python3 enacpp/tools/ena_plot.py OUT/flux_band13_*.h5 --movie --frame-seconds 0.5
+python3 enacpp/tools/ena_plot.py OUT/flux_band13_*.h5 --movie --normalize
 ```
 - **Frame time:** `--frame-seconds` (default 1 second per window).
 - **Colour range:** the same in every frame of a band (the band limits or `--vmin`/`--vmax`, otherwise one range over all the band's windows), so changes in brightness are real.
+- **Normalized movies:** with `--normalize`, each frame is divided by its own maximum and drawn from 0 to 1. The overall rise and fall of the flux drops out, so the movie shows only how the pattern of the map changes. The maximum of each frame is printed under the map.
+- **Colour bar:** continuous and the same in every frame. A GIF holds at most 256 colours, so every frame uses one fixed palette taken from the colour map.
 - **Format:** GIF by default, which plays in browsers and slide software and needs nothing beyond matplotlib; `--movie-format mp4` makes an MP4 where the `ffmpeg` program is installed.
 - **Output:** `flux_bandNN_total_nose_movie.gif` (with the component and view in the name) in `--out` or next to the files. All other options (view, component, scale, …) apply as for single maps.
 

@@ -10,6 +10,7 @@
     python3 enacpp/tools/ena_plot.py OUT/flux_band13.h5 --write-ecliptic     # all components on a 6-deg ecliptic grid
     python3 enacpp/tools/ena_plot.py OUT/flux_band13_*.h5 --movie            # time-dependent: one movie per band
     python3 enacpp/tools/ena_plot.py OUT/flux_band*_*.h5 --movie --frame-seconds 0.5 --movie-format mp4
+    python3 enacpp/tools/ena_plot.py OUT/flux_band13_*.h5 --movie --normalize   # each map / its own maximum
 
 Every option can be set in a plot settings file (--config; configs/plot_settings.toml
 lists them all); command-line options override the file. Input: the flux files of ena_run
@@ -49,6 +50,15 @@ with a black box per cell. Markers: UPWIND, V1, V2 on nose maps, DOWNWIND on tai
 --limits LONMIN LONMAX LATMIN LATMAX shows only a part of the sky (degrees relative to the
 map centre, longitude positive to the left).
 
+Normalized maps
+---------------
+--normalize divides each map by its own maximum (over the cells with complete coverage; cells with
+missing flux are left out), so maps of different times or bands can be compared by their pattern
+alone. The colour range is then 0 to 1 (--vmin/--vmax change it; band_limits are not used; with
+--log the default is 0.01 to 1), the title says "normalized" and the line under the map gives the
+maximum it was divided by. --scale has no effect on a normalized map. Works for single maps and
+movies (each frame normalized to its own maximum).
+
 Movies
 ------
 --movie turns the maps of a time-dependent run (flux_bandNN_<window>.h5) into one movie per band
@@ -58,7 +68,9 @@ the title line (--no-time-label: without). Every frame of a band has the same co
 that changes in brightness are real: band_limits or --vmin/--vmax where given, otherwise one
 range over all the band's frames. The frames all have the same size, so the map does not jump.
 --movie-format gif (default) needs nothing beyond matplotlib (it writes with Pillow, which
-matplotlib installs); mp4 needs the ffmpeg program. --movie-dpi sets the resolution (default
+matplotlib installs); mp4 needs the ffmpeg program. A GIF holds at most 256 colours: every frame
+uses the same palette, 192 colours of the colour map plus 64 greys, so the colour bar is continuous
+and identical in all frames, and a value has the same colour in every frame. --movie-dpi sets the resolution (default
 120; the stills keep --dpi). Output: flux_bandNN_<component>_<view>_movie.gif in --out or next to
 the first file.
 
@@ -107,6 +119,7 @@ DEFAULTS = {
     "projection": "mollweide",            # mollweide or hammer
     "idl": False,                         # placement of the original IDL plots (no rotation)
     "scale": 1.0,                         # flux multiplied by this
+    "normalize": False,                   # each map divided by its own maximum; colour range 0-1
     "log": False,                         # log colour scale
     "vmin": None, "vmax": None,           # colour limits for every band
     "common_range": False,                # one range per band over all input files
@@ -366,6 +379,15 @@ def map_values(path, s):
             m = np.where(ref != 0, m / ref, np.nan)
     else:
         m = m * float(s["scale"])
+    if s.get("normalize"):
+        # divide by the map's own maximum, over the cells with complete coverage (others are not used)
+        cov = info["coverage"]
+        use = np.isfinite(m) & ((cov != 0) if cov is not None else True)
+        mx = float(np.max(m[use])) if use.any() else np.nan
+        if not (mx > 0):
+            sys.exit(f"{path}: cannot normalize: the map has no positive value")
+        info["normalized_by"] = mx
+        m = m / mx
     return m, info
 
 
@@ -373,7 +395,9 @@ def title_of(info, s):
     if s["title"]:
         return s["title"]
     t = f"Energy = {float(info['ecentral_kev']):.3g} keV" if "ecentral_kev" in info else os.path.basename(s["_path"])
-    if not s.get("ratio") and float(s["scale"]) != 1.0:
+    if s.get("normalize"):
+        t += " (normalized)"
+    elif not s.get("ratio") and float(s["scale"]) != 1.0:
         t += f" (Flux x {float(s['scale']):g})"
     comp = info.get("legacy_component", s["component"])  # legacy files: the tag in the file name
     if comp not in ("total", "CombPUIs"):
@@ -463,7 +487,9 @@ def colour_limits(vals, s, band, common):
         good &= vals > 0
     lo = hi = None
     lo_auto = hi_auto = False
-    if band is not None and band in s["band_limits"]:
+    if s.get("normalize"):
+        lo, hi = (0.01 if s["log"] else 0.0), 1.0  # normalized maps: fixed range (band_limits not used)
+    elif band is not None and band in s["band_limits"]:
         lo, hi = s["band_limits"][band]
     if common is not None and lo is None:
         lo, hi = common
@@ -640,7 +666,10 @@ def draw_map(path, s, R, common=None, time_label=False):
             print(f"WARNING: {os.path.basename(path)}: legend_style '{style}' is too coarse for the range "
                   f"{lo:g}-{hi:g} (labels {' '.join(labels)}); use float or exponent")
     cb.ax.tick_params(labelsize=s["fontsize"] * 0.9)
-    cb.set_label("flux ratio" if s.get("ratio") else s["units_label"], fontsize=s["fontsize"] * 0.85)
+    if s.get("normalize"):
+        cb.set_label(("flux ratio" if s.get("ratio") else "ENA flux") + " / map maximum", fontsize=s["fontsize"] * 0.85)
+    else:
+        cb.set_label("flux ratio" if s.get("ratio") else s["units_label"], fontsize=s["fontsize"] * 0.85)
     ax.set_title(title_of(info, s), loc="left", fontsize=s["fontsize"] * 1.25)
     if flags.any():
         kept = int(info.get("include_incomplete_lines", 0)) == 1
@@ -653,8 +682,12 @@ def draw_map(path, s, R, common=None, time_label=False):
     note = "placement of the original IDL plots" if s["idl"] else "ecliptic J2000"
     fig.text(0.99, 0.0, f"{note}; {s['projection']}; centre ({c_lon:.1f}, {c_lat:+.1f})", ha="right",
              fontsize=s["fontsize"] * 0.55, color="0.4")
+    if "normalized_by" in info:  # the maximum the map was divided by, at the left under the map
+        unit_txt = "" if s.get("ratio") else " cm$^{-2}$ s$^{-1}$ sr$^{-1}$ keV$^{-1}$"
+        fig.text(0.01, 0.0, f"map maximum: {info['normalized_by']:.4g}{unit_txt}", ha="left",
+                 fontsize=s["fontsize"] * 0.7)
 
-    stem = os.path.splitext(os.path.basename(path))[0] + ("" if path.endswith(".dat") else f"_{s['component']}") + ("_ratio" if s.get("ratio") else "") + \
+    stem = os.path.splitext(os.path.basename(path))[0] + ("" if path.endswith(".dat") else f"_{s['component']}") + ("_ratio" if s.get("ratio") else "") + ("_norm" if s.get("normalize") else "") + \
         ("_idl" if s["idl"] else "") + f"_{s['view'] if s['center'] is None else 'custom'}"
     return fig, stem
 
@@ -670,6 +703,17 @@ def value_range(files, s):
         if vals.size:
             lo, hi = min(lo, vals.min()), max(hi, vals.max())
     return (lo, hi) if lo <= hi else None
+
+
+def gif_palette(cmap_name, Image):
+    """The GIF palette of the movies: 192 colours evenly along the colour map and 64 greys (black to
+    white: text, grid, cells with missing flux, and the blends at their edges)."""
+    cmap = plt.get_cmap(cmap_name)
+    cols = [tuple(int(round(255 * c)) for c in cmap(x)[:3]) for x in np.linspace(0.0, 1.0, 192)]
+    cols += [(g, g, g) for g in np.linspace(0, 255, 64).round().astype(int)]
+    pal = Image.new("P", (1, 1))
+    pal.putpalette([v for c in cols for v in c])
+    return pal
 
 
 def make_movies(files, s, R):
@@ -702,7 +746,7 @@ def make_movies(files, s, R):
         if len(frames) < 2:
             print(f"band {band:02d}: only one time window ({frames[0]}); no movie")
             continue
-        fixed = (band in s["band_limits"]) or (s["vmin"] is not None and s["vmax"] is not None)
+        fixed = s.get("normalize") or (band in s["band_limits"]) or (s["vmin"] is not None and s["vmax"] is not None)
         common = None if fixed else value_range(frames, s)  # one colour range for the whole movie
         # pass 1: the area every frame needs, so that all frames have the same size
         box = None
@@ -728,7 +772,11 @@ def make_movies(files, s, R):
                 plt.close(fig)
                 pngs.append(png)
             if fmt == "gif":
-                ims = [Image.open(p).convert("RGB").convert("P", palette=Image.ADAPTIVE, colors=256) for p in pngs]
+                # one fixed palette for every frame (192 colours of the colour map, 64 greys), not one
+                # chosen per frame: the colour bar is then continuous and the same in every frame
+                pal = gif_palette(s["cmap"], Image)
+                none = getattr(getattr(Image, "Dither", Image), "NONE", 0)
+                ims = [Image.open(p).convert("RGB").quantize(palette=pal, dither=none) for p in pngs]
                 ims[0].save(name, save_all=True, append_images=ims[1:], duration=int(round(seconds * 1000)), loop=0)
             else:
                 cmd = ["ffmpeg", "-y", "-loglevel", "error", "-framerate", f"{1.0 / seconds:g}",
@@ -779,6 +827,8 @@ def main():
     ap.add_argument("--projection", choices=sorted(PROJECTIONS))
     ap.add_argument("--idl", action="store_const", const=True, help="placement of the original IDL plots (no rotation)")
     ap.add_argument("--scale", type=float, help="multiply the flux by this")
+    ap.add_argument("--normalize", action="store_const", const=True,
+                    help="divide each map by its own maximum (colour range 0-1 unless --vmin/--vmax)")
     ap.add_argument("--log", action="store_const", const=True, help="log colour scale")
     ap.add_argument("--linear", dest="log", action="store_const", const=False, help="linear colour scale (default)")
     ap.add_argument("--vmin", type=float)

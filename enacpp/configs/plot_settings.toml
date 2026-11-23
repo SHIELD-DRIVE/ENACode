@@ -8,6 +8,7 @@ view = "nose"            # map centre: "nose" (upwind, 255.4 / +5.2: UPWIND, V1,
                          #   "tail" (downwind, 75.4 / -5.2: DOWNWIND marked) or "ecliptic" (lon 0, lat 0: all marked)
 # center = [255.0, 0.0]  # any other centre [lon, lat], ecliptic deg (overrides view)
 scale = 1.0              # flux multiplied by this; the title then says "(Flux x 1.8)"
+normalize = false        # true: each map divided by its own maximum, colour range 0-1 (--vmin/--vmax change it)
 # vmin = 0.0             # colour-bar minimum and maximum for every map (left out: the map's own min and max);
 # vmax = 12.0            #   values outside take the end colours
 component = "total"      # transmitted, reflected, accelerated, heliosheath_pui, solar_wind, ne4, neu,
