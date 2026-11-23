@@ -1,0 +1,44 @@
+#!/bin/csh
+# Heliopause from the magnetic field-line topology traced through the NATIVE MHD field, for every
+# snapshot of a time-dependent series, on NASA HECC Athena (PBS). Runs ena_fieldtopo_mhd --ena-config:
+# for each snapshot, the heliosheath cells (regions 3 and 6) of the ENA grid are traced through the
+# snapshot's MHD solution (.plt), and those whose field line is not closed become region 2 in a copy
+# of the boundaries file, named with _topomhd before the extension (boundaries_040.txt ->
+# boundaries_040_topomhd.txt, next to the original). The originals and the _topo copies of
+# ena_fieldtopo are not changed.
+#
+# MHDLIST: a text file with the MHD .plt file of each snapshot, one per line, in snapshot order
+# (line 1 = snapshot 0); relative paths are taken relative to the list file's folder.
+#
+# Afterwards, point the run at the copies, in [time_dependent.files] of the run configuration:
+#   boundaries = "time_series/boundaries_{index:03}_topomhd.txt"
+#
+# A copy that exists already is skipped, so the job can be resubmitted after a stop (add --overwrite
+# to the command to write them all again).
+# Needs ena_fieldtopo_mhd built (cmake --build enacpp/build_nompi --target ena_fieldtopo_mhd).
+#
+# Submit from the top directory (the one holding enacpp/):   qsub enacpp/tools/run_athena_fieldtopo_mhd.pbs
+#
+#PBS -N ena_topo_mhd
+#PBS -q normal
+#PBS -l select=1:ncpus=256:model=tur_ath
+#PBS -l walltime=12:00:00
+#PBS -j oe
+#PBS -W group_list=s8440
+# Notes on the lines above (PBS allows no comment after a directive on its line):
+#   walltime: about 4-6 minutes per snapshot (reading and indexing the MHD file take most of it);
+#   the log gives the time of each snapshot; resubmit if it runs out (finished snapshots are skipped).
+
+cd $PBS_O_WORKDIR
+
+module swap PrgEnv-intel PrgEnv-gnu
+module load cray-hdf5
+
+# CHECK: the run configuration (inputs.format = "ascii"), the MHD list, and the snapshots (all, A-B, or A,B,C)
+set CONFIG = enacpp/configs/my_td_run.toml
+set MHDLIST = mhd/mhd_list.txt
+set SNAPSHOTS = all
+
+# --edge-ism nose: leaving through the domain edge counts as the ISM only on the nose side (x < 0)
+# --subcell 1: the centre of each cell (as the region codes); 3: 3 x 3 seeds per cell, majority rule
+enacpp/build_nompi/ena_fieldtopo_mhd --ena-config $CONFIG --mhd-list $MHDLIST --snapshots $SNAPSHOTS --rewrite-boundaries --edge-ism nose --subcell 1 --threads 256 >& ena_topo_mhd_$PBS_JOBID.log

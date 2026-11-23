@@ -749,6 +749,7 @@ def make_movies(files, s, R):
         fixed = s.get("normalize") or (band in s["band_limits"]) or (s["vmin"] is not None and s["vmax"] is not None)
         common = None if fixed else value_range(frames, s)  # one colour range for the whole movie
         # pass 1: the area every frame needs, so that all frames have the same size
+        print(f"band {band:02d}: {len(frames)} windows; drawing each twice (size, then frame)", flush=True)
         box = None
         for f in frames:
             fig, _ = draw_map(f, s, R, common, time_label=s["time_label"])
@@ -771,6 +772,7 @@ def make_movies(files, s, R):
                 fig.savefig(png, dpi=int(s["movie_dpi"]), bbox_inches=box, facecolor="white")
                 plt.close(fig)
                 pngs.append(png)
+                print(f"  frame {k + 1} of {len(frames)}", flush=True)
             if fmt == "gif":
                 # one fixed palette for every frame (192 colours of the colour map, 64 greys), not one
                 # chosen per frame: the colour bar is then continuous and the same in every frame

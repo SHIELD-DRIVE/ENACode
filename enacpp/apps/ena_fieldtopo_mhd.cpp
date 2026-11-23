@@ -5,7 +5,37 @@
 //   ena_fieldtopo_mhd MHD.plt OUT.plt [--seed-box XMIN XMAX YMIN YMAX ZMIN ZMAX] [--seed-stride N]
 //                     [--points SEEDS.plt] [--no-mhd-vars] [--no-propagate] [--boundary-passes 4] [--z-top 500] [--z-bottom -500] [--hplim-ism ZMIN]
 //                     [--r-sun 50] [--max-length 10000] [--cell-fraction 0.5] [--substeps 2]
-//                     [--threads N]
+//                     [--edge-ism all|nose|none] [--threads N]
+//
+//   ena_fieldtopo_mhd --ena-config run.toml (--mhd-list LIST | --mhd MHD.plt) --snapshots all|A-B|A,B,...
+//                     [--rewrite-boundaries] [--suffix _topomhd] [--overwrite] [--subcell 1] [--out topo.dat]
+//                     [the tracing options above]
+//
+// ENA-grid mode (--ena-config): the heliosheath cells (regions 3 and 6) of the ENA grid of a run
+// configuration, at every radius, are classified by tracing through the native MHD field of each
+// snapshot, instead of the smoothed field of the boundaries file (ena_fieldtopo). The heliopause from the
+// topology then does not depend on the ENA grid's resolution, which at low latitudes in the heliotail
+// (the current sheet averaged over 6-degree cells) lets lines leak out of the heliosphere.
+//   - MHD files: --mhd-list LIST, one .plt per line in snapshot order (line 1 = snapshot 0; blank lines
+//     and lines starting with # skipped; relative paths relative to the list's folder), or --mhd FILE
+//     for one snapshot.
+//   - Seeds: the cell centre (--subcell 1, default: the point the region codes and every other value of
+//     the boundaries file refer to), or n x n points across the cell in theta and phi at its radius
+//     (--subcell n); the cell then becomes region 2 if more than half its seeds are not closed (for odd n
+//     the centre is one of them; for even n a tie keeps the cell).
+//   - --rewrite-boundaries writes the copy of the boundaries file with those cells set to region 2,
+//     named with --suffix (default _topomhd) before the extension, every other character kept (as
+//     ena_fieldtopo --rewrite-boundaries). A copy that exists is skipped unless --overwrite.
+//   - --out writes a Tecplot ASCII file on the ENA grid (with several snapshots OUT_NNN.dat): X, Y, Z,
+//     region, the centre seed's topology, ends and path lengths, the path length to the ISM, the closed
+//     fraction of the cell's seeds, and the region after the rewrite.
+//   - The run configuration must read ASCII files; the tracing options and defaults are those above
+//     (cell_fraction 0.5 of the native cell). Memory: the MHD coordinates, B and bricks only, about
+//     20-30 GB for a 224-million-cell solution. Time per snapshot: reading and indexing the MHD file
+//     (about 3 minutes on Athena) plus the tracing.
+// --edge-ism nose (both modes): leaving through the domain edge counts as reaching the ISM only at
+// x < 0 (the nose side); down the tail it ends as "domain edge (not ISM)" (end code 7) and counts like a
+// long line; none: never. Default all.
 //
 // Input: the MHD solution as BATS-R-US writes it for Tecplot: one FEBRICK zone whose nodes are the
 // cell centres and whose bricks join neighbouring centres (collapsed bricks where refinement levels
@@ -59,6 +89,10 @@
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+
+#include "boundaries_rewrite.hpp"
+#include "ena/config.hpp"
+#include "ena/snapshot.hpp"
 
 namespace {
 
@@ -201,13 +235,16 @@ Mesh read_mesh(const std::string& path, bool want_hplim, bool keep_all) {
 // field and tracing
 // ---------------------------------------------------------------------------------------------
 
-enum End : int { kSun = 1, kIsmZ = 2, kIsmHplim = 3, kIsmEdge = 4, kLong = 5, kNull = 6 };
+enum End : int { kSun = 1, kIsmZ = 2, kIsmHplim = 3, kIsmEdge = 4, kLong = 5, kNull = 6, kEdgeNotIsm = 7 };
 bool is_ism(int e) { return e == kIsmZ || e == kIsmHplim || e == kIsmEdge; }
 
 struct Settings {
   double z_top = 500.0, z_bottom = -500.0, r_sun = 50.0, max_length = 10000.0, cell_fraction = 0.5;
   double hplim_zmin = -1.0;  // < 0: off
   int substeps = 2;
+  // which exits through the domain edge count as reaching the ISM: 0 all, 1 only at x < 0 (the nose
+  // side), 2 none; the others end as kEdgeNotIsm, which counts like a long line (as in ena_fieldtopo)
+  int edge_ism = 0;
 };
 
 // The bricks, indexed by size class and position: a point finds the brick that holds it without any
@@ -399,6 +436,12 @@ struct Tracer {
     return true;
   }
 
+  // the end of a line that leaves through the outer edge of the domain at x
+  int edge_end(const double* x) const {
+    if (o.edge_ism == 0 || (o.edge_ism == 1 && x[0] < 0.0)) return kIsmEdge;
+    return kEdgeNotIsm;
+  }
+
   int stop_at(const double* x) const {
     const double r = std::sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
     if (r <= o.r_sun) return kSun;
@@ -428,7 +471,7 @@ struct Tracer {
     double length = 0.0;
     while (length < o.max_length) {
       const double h0 = F.cell_size(x);
-      if (!(h0 > 0)) return {kIsmEdge, length};
+      if (!(h0 > 0)) return {edge_end(x), length};
       const double h = sign * o.cell_fraction * h0 / o.substeps;
       double y[3] = {x[0], x[1], x[2]};
       for (int s = 0; s < o.substeps; ++s) {
@@ -441,7 +484,7 @@ struct Tracer {
           double probe[3] = {y[0] + h * k1[0], y[1] + h * k1[1], y[2] + h * k1[2]};
           if (F.cell_size(y) <= 0 || F.cell_size(probe) <= 0) {
             const double r = std::sqrt(y[0] * y[0] + y[1] * y[1] + y[2] * y[2]);
-            return {r <= 2.0 * o.r_sun ? kSun : kIsmEdge, length};  // out of the domain: inner body or outer edge
+            return {r <= 2.0 * o.r_sun ? kSun : edge_end(y), length};  // out of the domain: inner body or outer edge
           }
           return {kNull, length};
         }
@@ -452,7 +495,7 @@ struct Tracer {
       mark(x);
       if (F.cell_size(x) <= 0) {
         const double r = std::sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
-        return {r <= 2.0 * o.r_sun ? kSun : kIsmEdge, length};
+        return {r <= 2.0 * o.r_sun ? kSun : edge_end(x), length};
       }
       if (int e = stop_at(x)) return {e, length};
     }
@@ -528,11 +571,282 @@ void write_plt(const std::string& path, const std::string& title, const std::vec
   if (std::rename((path + ".part").c_str(), path.c_str()) != 0) throw std::runtime_error("cannot rename " + path + ".part");
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// ENA-grid mode (--ena-config): classify the heliosheath cells of the ENA grid by tracing through the
+// native MHD field, and write the boundaries files with the heliopause from the topology
+// ---------------------------------------------------------------------------------------------
+
+// the MHD files of a list file: one path per line (blank lines and lines starting with # skipped),
+// relative paths taken relative to the list file's folder; line k (from 0) is snapshot k
+std::vector<std::string> read_mhd_list(const std::string& list) {
+  std::FILE* f = std::fopen(list.c_str(), "r");
+  if (!f) throw std::runtime_error("cannot open --mhd-list " + list);
+  const std::size_t slash = list.find_last_of('/');
+  const std::string base = slash == std::string::npos ? "" : list.substr(0, slash + 1);
+  std::vector<std::string> out;
+  char buf[4096];
+  while (std::fgets(buf, sizeof buf, f)) {
+    std::string ln(buf);
+    while (!ln.empty() && std::isspace((unsigned char)ln.back())) ln.pop_back();
+    std::size_t a = 0;
+    while (a < ln.size() && std::isspace((unsigned char)ln[a])) ++a;
+    ln = ln.substr(a);
+    if (ln.empty() || ln[0] == '#') continue;
+    out.push_back(ln[0] == '/' ? ln : base + ln);
+  }
+  std::fclose(f);
+  return out;
+}
+
+int ena_grid_mode(int argc, char** argv) {
+  std::string cfg_path, mhd_one, mhd_list, snapshots_arg, out, suffix = "_topomhd";
+  bool rewrite = false, overwrite = false;
+  int subcell = 1;
+  Settings o;
+  for (int a = 1; a < argc; ++a) {
+    const std::string k = argv[a];
+    auto str = [&]() -> std::string {
+      if (a + 1 >= argc) throw std::runtime_error(k + " needs a value");
+      return argv[++a];
+    };
+    auto num = [&]() { return std::stod(str()); };
+    if (k == "--ena-config") cfg_path = str();
+    else if (k == "--mhd") mhd_one = str();
+    else if (k == "--mhd-list") mhd_list = str();
+    else if (k == "--snapshots") snapshots_arg = str();
+    else if (k == "--snapshot") snapshots_arg = str();
+    else if (k == "--out") out = str();
+    else if (k == "--rewrite-boundaries") rewrite = true;
+    else if (k == "--suffix") suffix = str();
+    else if (k == "--overwrite") overwrite = true;
+    else if (k == "--subcell") subcell = int(num());
+    else if (k == "--z-top") o.z_top = num();
+    else if (k == "--z-bottom") o.z_bottom = num();
+    else if (k == "--hplim-ism") o.hplim_zmin = num();
+    else if (k == "--r-sun") o.r_sun = num();
+    else if (k == "--max-length") o.max_length = num();
+    else if (k == "--cell-fraction") o.cell_fraction = num();
+    else if (k == "--substeps") o.substeps = int(num());
+    else if (k == "--edge-ism") {
+      const std::string v = str();
+      o.edge_ism = v == "all" ? 0 : v == "nose" ? 1 : v == "none" ? 2 : -1;
+      if (o.edge_ism < 0) throw std::runtime_error("--edge-ism: all, nose or none");
+    } else if (k == "--threads") {
+#ifdef _OPENMP
+      omp_set_num_threads(int(num()));
+#else
+      num();
+#endif
+    } else throw std::runtime_error("unknown argument " + k + " (with --ena-config)");
+  }
+  if (mhd_one.empty() == mhd_list.empty()) throw std::runtime_error("--ena-config needs --mhd FILE or --mhd-list LIST");
+  if (!rewrite && out.empty()) throw std::runtime_error("--ena-config: nothing to write (--rewrite-boundaries and/or --out)");
+  if (rewrite && suffix.empty()) throw std::runtime_error("--suffix must not be empty (the originals would be overwritten)");
+  if (subcell < 1 || subcell > 9) throw std::runtime_error("--subcell: 1 to 9");
+  if (!(o.cell_fraction > 0) || o.substeps < 1 || !(o.z_top > o.z_bottom) || !(o.max_length > 0))
+    throw std::runtime_error("need cell_fraction > 0, substeps >= 1, max_length > 0, z_top > z_bottom");
+
+  const auto t_start = Clock::now();
+  ena::RunConfig cfg = ena::load_config(cfg_path);
+  const ena::Grid& g = cfg.grid;
+  if (cfg.inputs.format != "ascii")
+    throw std::runtime_error("--ena-config: the run configuration must read ASCII files (inputs.format = \"ascii\")");
+  if (cfg.moscow()) throw std::runtime_error("--ena-config: the Moscow model source is not supported");
+  const std::size_t nsnap = cfg.inputs.snapshots.size();
+  std::vector<std::size_t> indices;
+  if (!snapshots_arg.empty()) indices = ena_topo::parse_snapshots(snapshots_arg, nsnap);
+  else if (!mhd_one.empty() && nsnap == 1) indices = {0};
+  else throw std::runtime_error("--ena-config: give --snapshots (all, A-B or A,B,C; from 0)");
+  std::vector<std::string> mhd_files;
+  if (!mhd_list.empty()) {
+    mhd_files = read_mhd_list(mhd_list);
+    if (mhd_files.size() != nsnap)
+      throw std::runtime_error("--mhd-list " + mhd_list + ": " + std::to_string(mhd_files.size()) + " files for " +
+                               std::to_string(nsnap) + " snapshots of the run configuration (line k is snapshot k)");
+  } else if (indices.size() != 1) {
+    throw std::runtime_error("--mhd FILE goes with one snapshot (--snapshots N); use --mhd-list for several");
+  }
+
+  const double kDeg = 3.14159265358979323846 / 180.0;
+  const int ns = subcell * subcell;
+  std::printf("ena_fieldtopo_mhd (ENA grid): %s, grid %d x %d x %d, %zu snapshot(s); the heliosheath cells (regions 3 "
+              "and 6) traced through the MHD field, %d seed(s) per cell%s\n",
+              cfg_path.c_str(), g.ntheta, g.nphi, g.nr, indices.size(), ns,
+              subcell > 1 ? " (a cell becomes region 2 if more than half its seeds are not closed)" : " (the centre)");
+  std::printf("  ISM: z >= %g or z <= %g AU, the domain edge%s%s; Sun: r <= %g AU; at most %g AU per direction, step %g "
+              "cell, %d substeps\n",
+              o.z_top, o.z_bottom, o.edge_ism == 0 ? "" : o.edge_ism == 1 ? " (at x < 0 only)" : " (not counted)",
+              o.hplim_zmin >= 0 ? (", Hplim < 0 at |z| >= " + std::to_string(o.hplim_zmin) + " AU").c_str() : "",
+              o.r_sun, o.max_length, o.cell_fraction, o.substeps);
+  if (rewrite)
+    std::printf("  rewriting the boundaries files: regions 3 and 6 -> 2 where not closed; copies named with \"%s\" "
+                "before the extension\n", suffix.c_str());
+
+  for (std::size_t si : indices) {
+    const auto t0 = Clock::now();
+    const std::string bfile = cfg.inputs.snapshots[si].boundaries;
+    const std::string bpath = cfg.inputs.path(bfile);
+    const std::string rpath = rewrite ? ena_topo::with_suffix(bpath, suffix) : std::string();
+    std::string tec = out;
+    if (!tec.empty() && indices.size() > 1) {
+      char tag[16];
+      std::snprintf(tag, sizeof tag, "_%03zu", si);
+      tec = ena_topo::with_suffix(tec, tag);
+    }
+    if (rewrite && !overwrite && tec.empty()) {
+      if (std::FILE* f = std::fopen(rpath.c_str(), "rb")) {
+        std::fclose(f);
+        std::printf("snapshot %zu: %s exists, skipped (--overwrite writes it again)\n", si, rpath.c_str());
+        continue;
+      }
+    }
+    const std::string mhd = mhd_list.empty() ? mhd_one : mhd_files[si];
+    std::printf("snapshot %zu: %s with %s\n", si, bfile.c_str(), mhd.c_str());
+
+    // the region codes of the ENA grid
+    ena::Snapshot snap;
+    ena::ReadOptions ro;
+    ro.verbose = false;
+    ena::read_boundaries_ascii(cfg, bpath, snap, ro);
+
+    // the native field
+    Mesh m = read_mesh(mhd, o.hplim_zmin >= 0, false);
+    const double t_read = since(t0);
+    const auto t1 = Clock::now();
+    Field F(m);
+    const double t_index = since(t1);
+    Tracer tr{F, o};
+
+    // the cells to classify and their seeds: the centre (seed 0, for the per-cell output) and, with
+    // --subcell n, n x n points across the cell in theta and phi at the cell's radius (for odd n the
+    // middle one is the centre itself)
+    std::vector<std::size_t> cells;
+    for (int i = 0; i < g.ntheta; ++i)
+      for (int j = 0; j < g.nphi; ++j)
+        for (int k = 0; k < g.nr; ++k) {
+          const int reg = snap.region(i, j, k);
+          if (reg == 3 || reg == 6) cells.push_back(g.index(i, j, k));
+        }
+    const bool extra_centre = subcell > 1 && subcell % 2 == 0;  // even n: the centre is not among the seeds
+    const int per_cell = ns + (extra_centre ? 1 : 0);
+    const std::size_t nseeds = cells.size() * std::size_t(per_cell);
+    std::vector<int8_t> sclass(nseeds), sef(nseeds), seb(nseeds);
+    std::vector<float> slf(nseeds), slb(nseeds);
+    auto cell_ijk = [&](std::size_t c, int& i, int& j, int& k) {
+      // inverse of g.index(i, j, k) = (i * nphi + j) * nr + k
+      k = int(c % g.nr); j = int((c / g.nr) % g.nphi); i = int(c / (std::size_t(g.nr) * g.nphi));
+    };
+    const auto t2 = Clock::now();
+    long long done = 0;
+#pragma omp parallel for schedule(dynamic, 64)
+    for (long long q = 0; q < (long long)nseeds; ++q) {
+      const std::size_t cell = cells[std::size_t(q) / per_cell];
+      const int s_in = int(std::size_t(q) % per_cell);
+      int i, j, k;
+      cell_ijk(cell, i, j, k);
+      double th = g.theta(i), ph = g.phi(j);
+      if (subcell > 1 && s_in < ns) {  // sub-cell seed (a, b); the extra centre seed of even n is s_in == ns
+        const int a = s_in / subcell, b = s_in % subcell;
+        th += ((a + 0.5) / subcell - 0.5) * g.dtheta;
+        ph += ((b + 0.5) / subcell - 0.5) * g.dphi;
+      }
+      const double r = g.r(k), st = std::sin(th * kDeg);
+      const double x[3] = {r * st * std::cos(ph * kDeg), r * st * std::sin(ph * kDeg), r * std::cos(th * kDeg)};
+      const auto f = tr.follow(x, +1.0), b = tr.follow(x, -1.0);
+      sef[q] = int8_t(f.first); seb[q] = int8_t(b.first); slf[q] = float(f.second); slb[q] = float(b.second);
+      sclass[q] = int8_t(classify(f.first, b.first));
+      long long d;
+#pragma omp atomic capture
+      d = ++done;
+      if (d % 200000 == 0) std::printf("    %lld of %zu seeds traced (%.0f s)\n", d, nseeds, since(t2));
+    }
+    const double t_trace = since(t2);
+
+    // per cell: the centre seed's class and ends, the closed fraction, the new region
+    std::vector<int> new_code(g.size(), -1), topo(g.size(), -1), endf(g.size(), 0), endb(g.size(), 0);
+    std::vector<float> lenf(g.size(), -1.0f), lenb(g.size(), -1.0f), frac(g.size(), -1.0f);
+    long long to2[7] = {0, 0, 0, 0, 0, 0, 0}, mixed = 0, count[5] = {0, 0, 0, 0, 0};
+    for (std::size_t c = 0; c < cells.size(); ++c) {
+      const std::size_t base = c * per_cell;
+      // the centre seed: the extra one for even n, the middle one for odd n, the only one for n = 1
+      const std::size_t centre = extra_centre ? base + ns : base + std::size_t((subcell / 2) * subcell + subcell / 2);
+      int open = 0;
+      for (int s2 = 0; s2 < ns; ++s2) open += sclass[base + s2] >= 2;
+      const std::size_t cell = cells[c];
+      topo[cell] = sclass[centre]; endf[cell] = sef[centre]; endb[cell] = seb[centre];
+      lenf[cell] = slf[centre]; lenb[cell] = slb[centre];
+      frac[cell] = float(ns - open) / float(ns);
+      if (sclass[centre] >= 0 && sclass[centre] <= 4) ++count[sclass[centre]];
+      if (open > 0 && open < ns) ++mixed;
+      if (2 * open > ns) {  // more than half the seeds are not closed (n = 1: the centre)
+        new_code[cell] = 2;
+        int i, j, k;
+        cell_ijk(cell, i, j, k);
+        ++to2[snap.region(i, j, k)];
+      }
+    }
+    std::printf("  %zu heliosheath cells (%zu seeds): read %.0f s, bricks indexed %.0f s, traced %.0f s\n", cells.size(),
+                nseeds, t_read, t_index, t_trace);
+    std::printf("  centre seeds: closed %lld, open %lld, interstellar %lld, ISM-connected %lld, undetermined %lld",
+                count[1], count[2], count[3], count[4], count[0]);
+    if (subcell > 1) std::printf("; cells with both closed and other seeds: %lld", mixed);
+    std::printf("\n");
+    if (rewrite) {
+      const long changed = ena_topo::rewrite_boundaries(cfg, bpath, rpath, new_code);
+      std::printf("  wrote %s: %ld cells set to region 2 (%lld of region 3, %lld of region 6)\n", rpath.c_str(), changed,
+                  to2[3], to2[6]);
+    }
+
+    // Tecplot file on the ENA grid (all radii; the last theta row repeated at theta = 180 deg)
+    if (!tec.empty()) {
+      const std::string tmp = tec + ".part";
+      std::FILE* fo = std::fopen(tmp.c_str(), "w");
+      if (!fo) throw std::runtime_error("cannot write " + tmp);
+      std::fprintf(fo, "# ena_fieldtopo_mhd: topology of the heliosheath cells of snapshot %zu of %s, traced through %s\n",
+                   si, cfg_path.c_str(), mhd.c_str());
+      std::fprintf(fo, "# topology (of the centre seed): 1 closed, 2 open, 3 interstellar, 4 ISM-connected, 0 undetermined, "
+                       "-1 not traced; ends: 1 Sun, 2 ISM (z limit), 3 ISM (Hplim), 4 ISM (domain edge), 5 long, 6 null, "
+                       "7 domain edge not counted as ISM; closed fraction: of the %d seed(s) of the cell\n", ns);
+      std::fprintf(fo, "TITLE = \"field-line topology on the native grid, snapshot %zu\"\n", si);
+      std::fprintf(fo, "VARIABLES = \"X AU\" \"Y AU\" \"Z AU\" \"region\" \"topology\" \"end along B\" \"end against B\" "
+                       "\"length along B AU\" \"length against B AU\" \"length to ISM AU\" \"closed fraction\" "
+                       "\"region (topology)\"\n");
+      std::fprintf(fo, "ZONE T=\"topology\", I=%d, J=%d, K=%d, DATAPACKING=POINT\n", g.nr, g.nphi, g.ntheta + 1);
+      auto row = [&](int i, int j, int k, bool pole) {
+        const std::size_t c = g.index(i, j, k);
+        const double th = (pole ? 180.0 : g.theta(i)) * kDeg, ph = g.phi(j) * kDeg, r = g.r(k);
+        double li = -1.0;
+        if (is_ism(endf[c])) li = lenf[c];
+        if (is_ism(endb[c]) && (li < 0 || lenb[c] < li)) li = lenb[c];
+        const int reg = snap.region(i, j, k);
+        std::fprintf(fo, "%.6e %.6e %.6e %d %d %d %d %.6e %.6e %.6e %.4f %d\n", r * std::sin(th) * std::cos(ph),
+                     r * std::sin(th) * std::sin(ph), r * std::cos(th), reg, topo[c], endf[c], endb[c], double(lenf[c]),
+                     double(lenb[c]), li, double(frac[c]), new_code[c] >= 0 ? new_code[c] : reg);
+      };
+      for (int i = 0; i < g.ntheta; ++i)
+        for (int j = 0; j < g.nphi; ++j)
+          for (int k = 0; k < g.nr; ++k) row(i, j, k, false);
+      for (int j = 0; j < g.nphi; ++j)
+        for (int k = 0; k < g.nr; ++k) row(g.ntheta - 1, j, k, true);
+      const bool ok = std::ferror(fo) == 0;
+      if (std::fclose(fo) != 0 || !ok) throw std::runtime_error("error writing " + tmp + " (disk full?)");
+      if (std::rename(tmp.c_str(), tec.c_str()) != 0) throw std::runtime_error("cannot rename " + tmp);
+      std::printf("  wrote %s\n", tec.c_str());
+    }
+    std::printf("  %.0f s\n", since(t0));
+  }
+  std::printf("done in %.0f s\n", since(t_start));
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   std::setvbuf(stdout, nullptr, _IOLBF, 0);
   try {
+    for (int a = 1; a < argc; ++a)
+      if (std::string(argv[a]) == "--ena-config") return ena_grid_mode(argc, argv);
     std::string in, out, points;
     bool keep_vars = true, propagate = true;
     int refine = 4;  // passes over the boundaries between classes
@@ -558,6 +872,12 @@ int main(int argc, char** argv) {
       else if (k == "--max-length") o.max_length = num();
       else if (k == "--cell-fraction") o.cell_fraction = num();
       else if (k == "--substeps") o.substeps = int(num());
+      else if (k == "--edge-ism") {
+        if (a + 1 >= argc) throw std::runtime_error("--edge-ism needs all, nose or none");
+        const std::string v = argv[++a];
+        o.edge_ism = v == "all" ? 0 : v == "nose" ? 1 : v == "none" ? 2 : -1;
+        if (o.edge_ism < 0) throw std::runtime_error("--edge-ism: all, nose or none");
+      }
       else if (k == "--threads") {
 #ifdef _OPENMP
         omp_set_num_threads(int(num()));
