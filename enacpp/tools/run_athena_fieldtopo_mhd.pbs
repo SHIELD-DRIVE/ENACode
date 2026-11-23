@@ -22,12 +22,14 @@
 #PBS -N ena_topo_mhd
 #PBS -q normal
 #PBS -l select=1:ncpus=256:model=tur_ath
-#PBS -l walltime=12:00:00
+#PBS -l walltime=08:00:00
 #PBS -j oe
 #PBS -W group_list=s8440
 # Notes on the lines above (PBS allows no comment after a directive on its line):
-#   walltime: about 4-6 minutes per snapshot (reading and indexing the MHD file take most of it);
-#   the log gives the time of each snapshot; resubmit if it runs out (finished snapshots are skipped).
+#   walltime: the normal queue allows at most 8 hours (longer: the long queue). About 3 minutes per
+#   snapshot with --subcell 1 (2010-02-06: 178 s, of which 133 s indexing the MHD file), so about
+#   6 hours for 120 snapshots; with --subcell 3 about 7 minutes per snapshot. The log gives the time of
+#   each snapshot; resubmit if it runs out (finished snapshots are skipped).
 
 cd $PBS_O_WORKDIR
 

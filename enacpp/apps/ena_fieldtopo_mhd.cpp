@@ -112,7 +112,20 @@ struct PltFile {
   }
   ~PltFile() { if (f) std::fclose(f); }
   void read(void* p, std::size_t n) {
-    if (std::fread(p, 1, n, f) != n) throw std::runtime_error(path + ": unexpected end of file");
+    const long long at = (long long)ftello(f);
+    if (std::fread(p, 1, n, f) != n)
+      throw std::runtime_error(path + ": unexpected end of file (reading " + std::to_string(n) + " bytes at byte " +
+                               std::to_string(at) + ")");
+  }
+  // read and discard n bytes: used instead of a seek for long stretches, since a long fseeko on a
+  // buffered stream misbehaved on the Athena /nobackup filesystem (Lustre) while reading through works
+  void discard(long long n) {
+    std::vector<char> buf(std::size_t(1) << 26);
+    while (n > 0) {
+      const std::size_t c = std::size_t(std::min<long long>(n, (long long)buf.size()));
+      read(buf.data(), c);
+      n -= (long long)c;
+    }
   }
   int32_t i32() { int32_t v; read(&v, 4); return v; }
   float f32() { float v; read(&v, 4); return v; }
@@ -213,7 +226,7 @@ Mesh read_mesh(const std::string& path, bool want_hplim, bool keep_all) {
     if (!dst && keep_all) { m.other.emplace_back(); dst = &m.other.back(); }
     const std::size_t w = fmt[v] == 1 ? 4 : fmt[v] == 2 ? 8 : 0;
     if (!w) throw std::runtime_error(path + ": variable data must be float or double");
-    if (!dst) { in.skip((long long)(n * w)); continue; }
+    if (!dst) { in.discard((long long)(n * w)); continue; }  // not needed: read through, no seek
     dst->resize(n);
     if (w == 4) {
       in.read(dst->data(), n * 4);
