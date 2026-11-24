@@ -29,6 +29,10 @@
 //   - --out writes a Tecplot ASCII file on the ENA grid (with several snapshots OUT_NNN.dat): X, Y, Z,
 //     region, the centre seed's topology, ends and path lengths, the path length to the ISM, the closed
 //     fraction of the cell's seeds, and the region after the rewrite.
+//   - --allow-truncated (both modes): an MHD file that ends early (an incomplete copy: the connectivity
+//     comes last, so the last bricks are missing) is used with the bricks present; a line that reaches
+//     the gap ends there as at the domain edge. Without it, such a file is an error naming how much is
+//     missing.
 //   - The run configuration must read ASCII files; the tracing options and defaults are those above
 //     (cell_fraction 0.5 of the native cell). Memory: the MHD coordinates, B and bricks only, about
 //     20-30 GB for a 224-million-cell solution. Time per snapshot: reading and indexing the MHD file
@@ -76,6 +80,8 @@
 // the nodes traced themselves (a scattered-point zone with the same variables).
 
 #include <algorithm>
+#include <cerrno>
+#include <sys/stat.h>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -111,11 +117,27 @@ struct PltFile {
     std::setvbuf(f, nullptr, _IOFBF, 1 << 24);
   }
   ~PltFile() { if (f) std::fclose(f); }
+  // read n bytes, in pieces of at most 64 MB; a short read that is not the end of the file (an I/O error
+  // of the file system, e.g. EINTR or EIO on Lustre) is retried up to 5 times from where it stopped
   void read(void* p, std::size_t n) {
-    const long long at = (long long)ftello(f);
-    if (std::fread(p, 1, n, f) != n)
-      throw std::runtime_error(path + ": unexpected end of file (reading " + std::to_string(n) + " bytes at byte " +
-                               std::to_string(at) + ")");
+    char* dst = static_cast<char*>(p);
+    std::size_t done = 0;
+    int retries = 0;
+    while (done < n) {
+      const std::size_t want = std::min<std::size_t>(n - done, std::size_t(1) << 26);
+      const std::size_t got = std::fread(dst + done, 1, want, f);
+      done += got;
+      if (got == want) continue;
+      const long long at = (long long)ftello(f);
+      if (std::feof(f))
+        throw std::runtime_error(path + ": unexpected end of file at byte " + std::to_string(at));
+      const int err = errno;
+      if (++retries > 5)
+        throw std::runtime_error(path + ": read error at byte " + std::to_string(at) + " (" + std::strerror(err) +
+                                 "), 5 retries failed");
+      std::fprintf(stderr, "warning: %s: read error at byte %lld (%s); retrying\n", path.c_str(), at, std::strerror(err));
+      std::clearerr(f);
+    }
   }
   // read and discard n bytes: used instead of a seek for long stretches, since a long fseeko on a
   // buffered stream misbehaved on the Athena /nobackup filesystem (Lustre) while reading through works
@@ -170,7 +192,7 @@ int find_var(const std::vector<std::string>& names, std::initializer_list<const 
   return -1;
 }
 
-Mesh read_mesh(const std::string& path, bool want_hplim, bool keep_all) {
+Mesh read_mesh(const std::string& path, bool want_hplim, bool keep_all, bool allow_truncated = false) {
   PltFile in(path);
   char magic[8];
   in.read(magic, 8);
@@ -237,6 +259,25 @@ Mesh read_mesh(const std::string& path, bool want_hplim, bool keep_all) {
         in.read(buf.data(), c * 8);
         for (std::size_t k = 0; k < c; ++k) (*dst)[i + k] = float(buf[k]);
       }
+    }
+  }
+  // the connectivity comes last: a file that ends early (an incomplete copy) misses the last bricks.
+  // With allow_truncated, the bricks present are used (a line that reaches the gap ends there, as at the
+  // edge of the domain); the variables before it must be complete
+  {
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) throw std::runtime_error("cannot stat " + path);
+    const long long pos = (long long)ftello(in.f), left = (long long)st.st_size - pos;
+    const long long present = std::max(0LL, left / 32);
+    if (present < m.nelem) {
+      const long long short_by = m.nelem * 32 - left;
+      if (!allow_truncated)
+        throw std::runtime_error(path + ": the file ends " + std::to_string(short_by) + " bytes early: the last " +
+                                 std::to_string(m.nelem - present) + " of " + std::to_string(m.nelem) +
+                                 " bricks are missing (an incomplete copy?); --allow-truncated uses the bricks present");
+      std::printf("  WARNING: %s ends %lld bytes early: the last %lld of %lld bricks are missing; using the %lld present "
+                  "(--allow-truncated)\n", path.c_str(), short_by, m.nelem - present, m.nelem, present);
+      m.nelem = present;
     }
   }
   m.conn.resize(std::size_t(m.nelem) * 8);
@@ -614,7 +655,7 @@ std::vector<std::string> read_mhd_list(const std::string& list) {
 
 int ena_grid_mode(int argc, char** argv) {
   std::string cfg_path, mhd_one, mhd_list, snapshots_arg, out, suffix = "_topomhd";
-  bool rewrite = false, overwrite = false;
+  bool rewrite = false, overwrite = false, allow_truncated = false;
   int subcell = 1;
   Settings o;
   for (int a = 1; a < argc; ++a) {
@@ -634,6 +675,7 @@ int ena_grid_mode(int argc, char** argv) {
     else if (k == "--suffix") suffix = str();
     else if (k == "--overwrite") overwrite = true;
     else if (k == "--subcell") subcell = int(num());
+    else if (k == "--allow-truncated") allow_truncated = true;
     else if (k == "--z-top") o.z_top = num();
     else if (k == "--z-bottom") o.z_bottom = num();
     else if (k == "--hplim-ism") o.hplim_zmin = num();
@@ -696,7 +738,10 @@ int ena_grid_mode(int argc, char** argv) {
     std::printf("  rewriting the boundaries files: regions 3 and 6 -> 2 where not closed; copies named with \"%s\" "
                 "before the extension\n", suffix.c_str());
 
+  // a snapshot that fails (e.g. a truncated MHD file) is reported and the others still go on
+  std::vector<std::pair<std::size_t, std::string>> failed;
   for (std::size_t si : indices) {
+   try {
     const auto t0 = Clock::now();
     const std::string bfile = cfg.inputs.snapshots[si].boundaries;
     const std::string bpath = cfg.inputs.path(bfile);
@@ -724,7 +769,7 @@ int ena_grid_mode(int argc, char** argv) {
     ena::read_boundaries_ascii(cfg, bpath, snap, ro);
 
     // the native field
-    Mesh m = read_mesh(mhd, o.hplim_zmin >= 0, false);
+    Mesh m = read_mesh(mhd, o.hplim_zmin >= 0, false, allow_truncated);
     const double t_read = since(t0);
     const auto t1 = Clock::now();
     Field F(m);
@@ -848,8 +893,19 @@ int ena_grid_mode(int argc, char** argv) {
       std::printf("  wrote %s\n", tec.c_str());
     }
     std::printf("  %.0f s\n", since(t0));
+   } catch (const std::exception& e) {
+    std::printf("  FAILED: snapshot %zu: %s\n", si, e.what());
+    failed.emplace_back(si, e.what());
+   }
   }
   std::printf("done in %.0f s\n", since(t_start));
+  if (!failed.empty()) {
+    std::printf("%zu snapshot(s) FAILED (no copy written; fix them and run again, e.g. --snapshots", failed.size());
+    for (std::size_t k = 0; k < failed.size(); ++k) std::printf("%s%zu", k ? "," : " ", failed[k].first);
+    std::printf("):\n");
+    for (auto& f : failed) std::printf("  snapshot %zu: %s\n", f.first, f.second.c_str());
+    return 1;
+  }
   return 0;
 }
 
@@ -861,7 +917,7 @@ int main(int argc, char** argv) {
     for (int a = 1; a < argc; ++a)
       if (std::string(argv[a]) == "--ena-config") return ena_grid_mode(argc, argv);
     std::string in, out, points;
-    bool keep_vars = true, propagate = true;
+    bool keep_vars = true, propagate = true, allow_truncated = false;
     int refine = 4;  // passes over the boundaries between classes
     Settings o;
     double box[6] = {-1e300, 1e300, -1e300, 1e300, -1e300, 1e300};
@@ -877,6 +933,7 @@ int main(int argc, char** argv) {
       else if (k == "--points") { if (a + 1 >= argc) throw std::runtime_error("--points needs a file"); points = argv[++a]; }
       else if (k == "--no-mhd-vars") keep_vars = false;
       else if (k == "--no-propagate") propagate = false;
+      else if (k == "--allow-truncated") allow_truncated = true;
       else if (k == "--boundary-passes") refine = int(num());
       else if (k == "--z-top") o.z_top = num();
       else if (k == "--z-bottom") o.z_bottom = num();
@@ -912,7 +969,7 @@ int main(int argc, char** argv) {
       throw std::runtime_error("need --seed-stride >= 1, cell_fraction > 0, substeps >= 1, z_top > z_bottom");
     const auto t0 = Clock::now();
 
-    Mesh m = read_mesh(in, o.hplim_zmin >= 0, keep_vars);
+    Mesh m = read_mesh(in, o.hplim_zmin >= 0, keep_vars, allow_truncated);
     std::printf("%s: %lld nodes, %lld bricks; read in %.0f s\n", in.c_str(), m.npts, m.nelem, since(t0));
     auto t1 = Clock::now();
     Field F(m);
