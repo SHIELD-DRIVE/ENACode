@@ -15,9 +15,10 @@ Contact: Marc Kornbleuth ([kmarc@bu.edu](mailto:kmarc@bu.edu))
 8. [Preparing input series from MHD solutions](#8-preparing-input-series-from-mhd-solutions)
 9. [Faster input: converting to HDF5](#9-faster-input-converting-to-hdf5-optional)
 10. [Making sky maps](#10-making-sky-maps)
-11. [Checking results](#11-checking-results)
-12. [Common problems](#12-common-problems)
-13. [Contact](#13-contact)
+11. [The heliopause from the magnetic field](#11-the-heliopause-from-the-magnetic-field-optional)
+12. [Checking results](#12-checking-results)
+13. [Common problems](#13-common-problems)
+14. [Contact](#14-contact)
 
 # 1. What the code does
 
@@ -181,7 +182,7 @@ Shorter examples: `run_reference.toml` (single-ion), `run_esi.toml` (extended si
 | `[physics] survival` | ENA losses on the way in | `true` |
 | `[physics] extinction` | cooling of the pickup ions along the streamlines | `true` |
 | `[physics] kappa`, `kappa_pui`, `kappa_ref`, `kappa_oh` | kappa values of the ion distributions (≤ 1.5 means Maxwellian) | 1 |
-| `[physics] unfilled_cells` | heliosheath cells that no streamline reaches: `"error"` stops the run, `"skip"` leaves them out (section 12) | `"error"` |
+| `[physics] unfilled_cells` | heliosheath cells that no streamline reaches: `"error"` stops the run, `"skip"` leaves them out (section 13) | `"error"` |
 | `[time_dependent] enabled` | `true` for time-dependent maps (section 6) | `false` |
 
 The remaining settings are expert options, documented in `all_settings.toml`: the termination-shock treatment, `[region6]`, `[multi_ion]`, sensor tables and input column layouts. Leave them at their defaults unless you know you need them.
@@ -404,6 +405,11 @@ python3 enacpp/tools/ena_plot.py OUT/flux_band*.h5 --config enacpp/configs/plot_
 
 - **Settings file:** `enacpp/configs/plot_settings.toml` holds all plot settings.
 - **Legacy files:** the plotter also reads the legacy count-rate files (`…CountRate…EbandNN.dat`).
+- **On Athena:** the system `python3` has no numpy, h5py or matplotlib. Make a Python environment once (section 13, "externally-managed-environment"), then in each new session first:
+  ```
+  module load cray-python
+  source ~/ena-env/bin/activate.csh
+  ```
 
 **Movies of time-dependent maps.** `--movie` turns the maps of a time-dependent run into one movie per band, the time windows in order, each frame labelled with its window in large type:
 ```
@@ -417,8 +423,62 @@ python3 enacpp/tools/ena_plot.py OUT/flux_band13_*.h5 --movie --normalize
 - **Colour bar:** continuous and the same in every frame. A GIF holds at most 256 colours, so every frame uses one fixed palette taken from the colour map.
 - **Format:** GIF by default, which plays in browsers and slide software and needs nothing beyond matplotlib; `--movie-format mp4` makes an MP4 where the `ffmpeg` program is installed.
 - **Output:** `flux_bandNN_total_nose_movie.gif` (with the component and view in the name) in `--out` or next to the files. All other options (view, component, scale, …) apply as for single maps.
+- **Progress:** every frame is drawn twice (to give all frames the same size), so a band can take a minute or more on a front end; the log prints `band NN: …` and `frame k of n`.
 
-# 11. Checking results
+# 11. The heliopause from the magnetic field (optional)
+
+The region codes of the boundaries files come from the input preparation, where the heliopause is set by `Hplim` and the flow speed. In the low-latitude heliotail that test cannot separate the solar field (inside the heliopause) from the region where field lines have reconnected with the interstellar field. The field lines themselves can: a line that never reaches the interstellar medium is solar field. `ena_fieldtopo_mhd` follows the field line through every heliosheath cell (region 3 or 6) of each snapshot, in the original MHD solution, and writes a copy of the boundaries file in which every such cell whose line reaches the interstellar medium is region 2. Nothing else changes: the termination shock, the other regions, and the plasma, neutral and streamline files stay as they are.
+
+**What counts as the interstellar medium:** \|z\| ≥ 500 AU (z along the solar rotation axis), or leaving the MHD domain on the nose side. A line that reaches neither within 10,000 AU of path counts as solar field. The Developer Manual (section 9.10) gives the exact definition and the checks behind it.
+
+**What you need:** the run's settings file reading the text inputs (`inputs.format = "ascii"`), the MHD solutions (`.plt`) of the series, and `ena_fieldtopo_mhd` built (`cmake --build enacpp/build_nompi --target ena_fieldtopo_mhd`).
+
+**1. A list of the MHD files,** one per line in snapshot order (line 1 = snapshot 0), with the same files the input preparation used. In the `mhd` folder, for example:
+```
+ls mhd/3d__var_1_t*.plt | sed 's|^mhd/||' > mhd/mhd_list.txt
+```
+Paths in the list are taken relative to the list's folder. Keep exactly as many lines as the run has snapshots (remove a solution after the last time cell).
+
+**2. One snapshot first,** on a compute node (reading an MHD solution takes 20–30 GB of memory):
+```
+qsub -I -q normal -l select=1:ncpus=256:model=tur_ath -l walltime=01:00:00 -W group_list=s8440
+```
+then, in the top folder:
+```
+enacpp/build_nompi/ena_fieldtopo_mhd --ena-config enacpp/configs/my_td_run.toml --mhd-list mhd/mhd_list.txt --snapshots 40 --rewrite-boundaries --edge-ism nose --out topo_040.dat --threads 256
+```
+This writes `time_series/boundaries_040_topomhd.txt` and `topo_040.dat`, about 3 minutes in all. In Tecplot, load `topo_040.dat` and contour `region (topology)` (the regions the run will use) or `topology` (1 closed, 3 interstellar, 4 connected to the interstellar medium).
+
+**3. All snapshots:** set `CONFIG`, `MHDLIST` and `SNAPSHOTS` in `enacpp/tools/run_athena_fieldtopo_mhd.pbs`, then
+```
+qsub enacpp/tools/run_athena_fieldtopo_mhd.pbs
+```
+About 3 minutes per snapshot (120 snapshots: about 6 hours, within the normal queue's 8 hours). Snapshots already done are skipped, so a stopped job is simply submitted again. A snapshot that cannot be read is reported as `FAILED` at the end of the log, and the others go on.
+
+**4. Use the new files:** under `[time_dependent.files]` of the run's settings file,
+```
+boundaries = "time_series/boundaries_{index:03}_topomhd.txt"
+```
+then run `ena_run` as before. The original boundaries files are kept: going back is the old line.
+
+**Checks:**
+```
+grep -E "WARNING|FAILED" ena_topo_mhd_*.log
+ls secondary_files/input/time_series/boundaries_*_topomhd.txt | wc -l
+```
+The second command should print the number of snapshots.
+
+| Option | Effect |
+|---|---|
+| `--subcell 3` | 3 × 3 field lines per cell instead of the centre; the cell becomes region 2 if most of them reach the interstellar medium. Changes few cells; takes more than twice as long |
+| `--edge-ism nose` | leaving the MHD domain counts as the interstellar medium only on the nose side (a line can leave down the tail while still in the heliotail) |
+| `--allow-truncated` | use an MHD file that lacks only the end of its brick list (an incomplete copy); without it such a file is an error |
+| `--overwrite` | write copies that exist already again (e.g. after changing an option) |
+| `--suffix _name` | another ending for the copies than `_topomhd` |
+
+**A quicker, coarser version:** `enacpp/build_nompi/ena_fieldtopo enacpp/configs/my_td_run.toml --snapshots all --rewrite-boundaries --ism-regions none --edge-ism nose` does the same from the magnetic field in the boundaries files themselves, in seconds per snapshot, and writes `boundaries_NNN_topo.txt`. The ENA grid is coarse (6° cells), and at low latitudes in the tail field lines leak out of the heliosphere on it: for 2010-02-06 it opened the tail about 100 AU too early and changed about three times as many cells inside 800 AU. Use it for a quick look, and `ena_fieldtopo_mhd` for results.
+
+# 12. Checking results
 
 | Tool | Use |
 |---|---|
@@ -426,7 +486,7 @@ python3 enacpp/tools/ena_plot.py OUT/flux_band13_*.h5 --movie --normalize
 | `python3 enacpp/tools/compare_runs.py REF OTHER --rtol 0.01` | do two runs agree (e.g. workstation and Athena, or two input versions)? Reports each map as identical, agreeing within the tolerance, or different, with the worst cells. Give folders, not wildcards. |
 | `python3 enacpp/tools/compare_inputs.py A B [A2 B2 …]` | do two sets of input files agree? Files in pairs; streamline files are compared streamline by streamline. |
 
-# 12. Common problems
+# 13. Common problems
 
 | Problem | Solution |
 |---|---|
@@ -441,12 +501,16 @@ python3 enacpp/tools/ena_plot.py OUT/flux_band13_*.h5 --movie --normalize
 | The input preparation is very slow on a NASA node | Use `run_aitken_prep.pbs`: it copies the inputs to the node's disk and keeps Tecplot on 24 cores. |
 | "error: externally-managed-environment" from `pip` | Install the Python packages in a virtual environment: `python3 -m venv ~/ena-env`, then `~/ena-env/bin/python3 -m pip install numpy h5py matplotlib`. |
 | WARNING about regions with missing flux | Time-dependent run: the first windows are too close to the first snapshot for that energy (section 6). |
+| `python3: No match.` (csh) | A wildcard in the command matched no file, e.g. a mistyped folder name; it does not mean that Python is missing. |
+| "Permission denied" when a map or movie is written | The output folder, or a file of that name in it, is not writable: write to another folder with `--out`. |
+| `ena_fieldtopo_mhd`: "… N files for M snapshots" | The MHD list has a line too many or too few (section 11). |
+| `ena_fieldtopo_mhd`: "unexpected end of file" or "read error" | Check the MHD file: `python3 enacpp/tools/plt_header.py FILE.plt` ends with "match" or "MISMATCH". A matching file had a read error of the file system: run that snapshot again. A short file needs `--allow-truncated` (if only its last bricks are missing) or replacing. |
 | WARNING about region-5 cells or heliosheath pockets | The region codes in `boundaries.txt` have undetermined cells or a wavy termination shock; the log and `heliosheath_pockets.txt` give their locations. |
 
 **More detail:**
 - `enacpp/docs/REFERENCE.md`: the full reference (every program, option and check).
 - `enacpp/CHANGES_FROM_IDL.md`: the code began as a port of an IDL code; this lists every difference from it.
 
-# 13. Contact
+# 14. Contact
 
 For questions about the code, its inputs or its results, contact **Marc Kornbleuth**, [kmarc@bu.edu](mailto:kmarc@bu.edu).
